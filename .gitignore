@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# 数据文件
+data/
+*.parquet
+*.db
+*.sqlite
+*.pkl
+*.pickle
+
+# 配置文件（包含敏感信息）
+config/config.yaml
+config/stock_pools.yaml
+
+# 日志文件
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp
+
+ref/

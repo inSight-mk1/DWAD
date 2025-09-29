@@ -1,0 +1,31 @@
+# 核心数据处理
+pandas>=2.1.0
+numpy>=1.24.0
+pyarrow>=14.0.0
+
+# API和网络请求
+requests>=2.31.0
+urllib3>=2.0.0
+
+# 数据可视化 (暂时保留，后续可能需要)
+plotly>=5.17.0
+matplotlib>=3.7.0
+
+# 配置和工具
+pyyaml>=6.0.1
+loguru>=0.7.0
+click>=8.1.0
+tqdm>=4.66.0
+
+# 任务调度
+apscheduler>=3.10.0
+
+# 开发工具
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0
+
+# Jupyter (用于数据分析和调试)
+jupyter>=1.0.0
+ipykernel>=6.25.0
