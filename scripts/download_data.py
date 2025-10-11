@@ -12,8 +12,9 @@ DWAD 数据下载工具启动脚本
 import sys
 from pathlib import Path
 
-# 添加项目源码路径
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# 添加项目源码路径到 sys.path
+SRC_DIR = Path(__file__).resolve().parent.parent / 'src'
+sys.path.insert(0, str(SRC_DIR))
 
 from dwad.tools.data_downloader import main
 
