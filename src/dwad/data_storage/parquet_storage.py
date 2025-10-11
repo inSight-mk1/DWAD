@@ -197,38 +197,45 @@ class ParquetStorage:
             logger.error(f"保存股票基本信息失败: {e}")
             return False
 
-    def load_stock_info(self) -> List[StockInfo]:
+    def load_stock_info(self, as_dataframe: bool = True):
         """
         加载股票基本信息
 
+        Args:
+            as_dataframe: 是否返回DataFrame，默认True；False则返回StockInfo对象列表
+
         Returns:
-            股票信息列表
+            股票信息DataFrame或列表
         """
         try:
             file_path = self.metadata_path / "stock_info.parquet"
 
             if not file_path.exists():
                 logger.warning("股票基本信息文件不存在")
-                return []
+                return pd.DataFrame() if as_dataframe else []
 
             df = pd.read_parquet(file_path)
-            stock_list = []
 
-            for _, row in df.iterrows():
-                stock = StockInfo(
-                    symbol=row['symbol'],
-                    name=row['name'],
-                    market=row['market'],
-                    listing_date=row.get('listing_date', None)
-                )
-                stock_list.append(stock)
+            if as_dataframe:
+                logger.debug(f"成功加载{len(df)}只股票的基本信息")
+                return df
+            else:
+                stock_list = []
+                for _, row in df.iterrows():
+                    stock = StockInfo(
+                        symbol=row['symbol'],
+                        name=row['name'],
+                        market=row['market'],
+                        listing_date=row.get('listing_date', None)
+                    )
+                    stock_list.append(stock)
 
-            logger.debug(f"成功加载{len(stock_list)}只股票的基本信息")
-            return stock_list
+                logger.debug(f"成功加载{len(stock_list)}只股票的基本信息")
+                return stock_list
 
         except Exception as e:
             logger.error(f"加载股票基本信息失败: {e}")
-            return []
+            return pd.DataFrame() if as_dataframe else []
 
     def save_update_log(self, update_info: Dict[str, Any]) -> bool:
         """
@@ -348,3 +355,77 @@ class ParquetStorage:
         except Exception as e:
             logger.error(f"获取存储统计信息失败: {e}")
             return {}
+
+    def save_index_data(self, pool_name: str, concept_name: str, index_type: str, data: pd.DataFrame) -> bool:
+        """
+        保存指数数据
+
+        Args:
+            pool_name: 股池名称
+            concept_name: 概念名称
+            index_type: 指数类型（如 'average', 'market_cap'）
+            data: 指数数据DataFrame，应包含'date'和'index_value'列
+
+        Returns:
+            是否保存成功
+        """
+        try:
+            if data.empty:
+                logger.warning(f"指数数据为空，跳过保存: [{pool_name} - {concept_name}]")
+                return False
+
+            # 创建指数数据目录
+            index_dir = self.indices_path / pool_name
+            index_dir.mkdir(parents=True, exist_ok=True)
+
+            # 构建文件名
+            file_name = f"{concept_name}_{index_type}.parquet"
+            file_path = index_dir / file_name
+
+            # 确保数据格式正确
+            data = data.copy()
+            if 'date' in data.columns:
+                data['date'] = pd.to_datetime(data['date']).dt.strftime('%Y-%m-%d')
+
+            # 按日期排序
+            if 'date' in data.columns:
+                data = data.sort_values('date')
+
+            # 保存为Parquet格式
+            data.to_parquet(file_path, index=False, compression='snappy')
+
+            logger.info(f"成功保存指数数据到 {file_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"保存指数数据失败 [{pool_name} - {concept_name}]: {e}")
+            return False
+
+    def load_index_data(self, pool_name: str, concept_name: str, index_type: str) -> pd.DataFrame:
+        """
+        加载指数数据
+
+        Args:
+            pool_name: 股池名称
+            concept_name: 概念名称
+            index_type: 指数类型（如 'average', 'market_cap'）
+
+        Returns:
+            指数数据DataFrame
+        """
+        try:
+            index_dir = self.indices_path / pool_name
+            file_name = f"{concept_name}_{index_type}.parquet"
+            file_path = index_dir / file_name
+
+            if not file_path.exists():
+                logger.debug(f"指数数据文件不存在: {file_path}")
+                return pd.DataFrame()
+
+            data = pd.read_parquet(file_path)
+            logger.debug(f"成功加载指数数据: [{pool_name} - {concept_name}]，{len(data)}条数据")
+            return data
+
+        except Exception as e:
+            logger.error(f"加载指数数据失败 [{pool_name} - {concept_name}]: {e}")
+            return pd.DataFrame()
