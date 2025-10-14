@@ -46,3 +46,8 @@ Thumbs.db
 *.temp
 
 ref/
+*.xls
+*.xlsx
+
+# 输出报告文件
+reports/

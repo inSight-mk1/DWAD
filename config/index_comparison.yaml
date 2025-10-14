@@ -1,0 +1,82 @@
+# 股池指数比较配置文件
+# 用于配置需要比较的指数以及比较参数
+
+# 比较起始日期（用于归一化和计算涨幅）
+# 格式：YYYY-MM-DD
+# 如果设置为 null 或不设置，将使用所有指数中最晚的起始日期
+comparison_start_date: "2024-09-18"
+
+# 需要比较的指数列表
+# 每个指数需要指定股池名称和概念名称
+indices_to_compare:
+  - pool_name: "大概念股池"
+    concept_name: "CSWD重组"
+    display_name: "CSWD重组"
+    
+  - pool_name: "大概念股池"
+    concept_name: "储能产业"
+    display_name: "储能产业"
+    
+  - pool_name: "大概念股池"
+    concept_name: "创新药优势成长50"
+    display_name: "创新药"
+    
+  - pool_name: "大概念股池"
+    concept_name: "医疗器械"
+    display_name: "医疗器械"
+    
+  - pool_name: "大概念股池"
+    concept_name: "机器人"
+    display_name: "机器人"
+    
+  - pool_name: "大概念股池"
+    concept_name: "消费电子"
+    display_name: "消费电子"
+    
+  - pool_name: "大概念股池"
+    concept_name: "电网设备主题"
+    display_name: "电网设备"
+    
+  - pool_name: "大概念股池"
+    concept_name: "科创芯片"
+    display_name: "科创芯片"
+    
+  - pool_name: "大概念股池"
+    concept_name: "软件开发"
+    display_name: "软件开发"
+
+# 可视化配置
+visualization:
+  # 图表标题
+  title: "股池指数排名趋势"
+  
+  # 图表宽度（像素）
+  width: 1400
+  
+  # 单图表模式高度（像素）
+  height: 800
+  
+  # 多图表模式每个图表高度（像素）
+  # 建议600-700px，确保图表和图例能在同一屏显示
+  multi_chart_height: 600
+  
+  # 是否显示数据点标记
+  show_markers: true
+  
+  # 线条宽度
+  line_width: 2
+  
+  # 是否显示网格
+  show_grid: true
+  
+  # 输出文件名
+  output_filename: "index_ranking_comparison.html"
+  
+  # 输出目录（相对于项目根目录）
+  output_dir: "reports"
+
+# 说明：
+# 1. comparison_start_date: 所有指数从此日期开始进行比较，早于此日期的数据会被裁剪
+# 2. indices_to_compare: 列出所有需要比较的指数
+# 3. display_name: 可选字段，如果不设置则使用 concept_name
+# 4. 系统会自动处理不同指数起始日期不同的情况，从比较起点归一化
