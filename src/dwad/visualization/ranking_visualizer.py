@@ -113,6 +113,7 @@ class RankingVisualizer:
                     'width': line_width,
                     'color': color
                 },
+                'legendgroup': series['name'],  # 与实时数据同组
                 'customdata': [[date, change] for date, change in zip(series_dates, changes)],  # 添加日期和涨跌幅数据
                 'hovertemplate': f"<b>{series['name']}</b><br>" +
                                 "日期: %{customdata[0]}<br>" +
@@ -121,6 +122,77 @@ class RankingVisualizer:
                                 "<extra></extra>"
             }
             traces.append(trace)
+        
+        # 添加实时数据（如果存在）
+        realtime_data = ranking_data.get('realtime')
+        realtime_timestamp = None
+        if realtime_data:
+            realtime_rankings = realtime_data.get('rankings', {})
+            realtime_timestamp = realtime_data.get('timestamp')
+            
+            if realtime_rankings:
+                logger.info(f"添加实时数据到图表，时间: {realtime_timestamp}")
+                
+                # 为每个指数添加实时数据点（虚线）
+                for idx, series in enumerate(series_list):
+                    name = series['name']
+                    if name in realtime_rankings:
+                        color = self.colors[idx % len(self.colors)]
+                        
+                        # 获取最后一个历史数据点
+                        last_x = len(series['ranks'][1:]) - 1 if len(series['ranks']) > 1 else 0
+                        last_rank = series['ranks'][-1]
+                        
+                        # 实时排名
+                        realtime_rank = realtime_rankings[name]['rank']
+                        realtime_change = realtime_rankings[name]['change_pct']
+                        
+                        # 创建细直线trace（从最后历史点到实时点）
+                        realtime_trace = {
+                            'x': [last_x, last_x + 1],
+                            'y': [last_rank, realtime_rank],
+                            'name': f'{name}',
+                            'type': 'scatter',
+                            'mode': 'lines',
+                            'line': {
+                                'width': line_width * 0.5,  # 更细的线条
+                                'color': color
+                            },
+                            'showlegend': False,  # 不在图例中显示
+                            'legendgroup': name,  # 与历史数据同组
+                            'hoverinfo': 'skip',  # 不显示悬停信息，避免历史点被覆盖
+                            'is_realtime': True,  # 标记这是实时数据
+                            'realtime_change': realtime_change  # 存储实时涨跌幅
+                        }
+                        traces.append(realtime_trace)
+                        
+                        # 添加实时数据点标记
+                        marker_trace = {
+                            'x': [last_x + 1],
+                            'y': [realtime_rank],
+                            'name': f'{name}',
+                            'type': 'scatter',
+                            'mode': 'markers',
+                            'marker': {
+                                'size': 10,  # 稍微增大标记点
+                                'color': color,
+                                'symbol': 'circle',
+                                'line': {
+                                    'width': 2,  # 添加白色边框，让重叠点更易区分
+                                    'color': 'white'
+                                }
+                            },
+                            'showlegend': False,
+                            'legendgroup': name,  # 与历史和实时线同组
+                            'hovertemplate': f"<b>{name} (实时)</b><br>" +
+                                            "实时排名: %{y}<br>" +
+                                            "实时涨跌幅: " + f"{realtime_change:.2f}%<br>" +
+                                            "<extra></extra>"
+                        }
+                        traces.append(marker_trace)
+                
+                # 如果有实时数据，扩展日期列表
+                dates = dates + ['实时']
         
         # 生成HTML内容
         # 使用indent=2格式化JSON，便于调试
@@ -131,7 +203,8 @@ class RankingVisualizer:
             width=width,
             height=height,
             total_indices=total_indices,
-            show_grid=show_grid
+            show_grid=show_grid,
+            realtime_timestamp=realtime_timestamp
         )
         
         # 写入文件
@@ -180,6 +253,8 @@ class RankingVisualizer:
         
         # 为每个周期准备traces数据
         all_periods_traces = []
+        realtime_timestamp = None
+        
         for period_data in ranking_data['periods']:
             traces = []
             series_list = period_data['series']
@@ -208,6 +283,7 @@ class RankingVisualizer:
                         'width': line_width,
                         'color': color
                     },
+                    'legendgroup': series['name'],  # 与实时数据同组
                     'customdata': [[date, change] for date, change in zip(series_dates, changes)],  # 添加日期和涨跌幅数据
                     'hovertemplate': f"<b>{series['name']}</b><br>" +
                                     "日期: %{customdata[0]}<br>" +
@@ -216,6 +292,72 @@ class RankingVisualizer:
                                     "<extra></extra>"
                 }
                 traces.append(trace)
+            
+            # 添加实时数据（如果存在）
+            realtime_data = period_data.get('realtime')
+            if realtime_data:
+                realtime_rankings = realtime_data.get('rankings', {})
+                realtime_timestamp = realtime_data.get('timestamp')
+                
+                if realtime_rankings:
+                    logger.info(f"为周期 {period_data['period']} 天添加实时数据")
+                    
+                    # 为每个指数添加实时数据点（虚线）
+                    for idx, series in enumerate(series_list):
+                        name = series['name']
+                        if name in realtime_rankings:
+                            color = self.colors[idx % len(self.colors)]
+                            
+                            # 获取最后一个历史数据点
+                            last_x = len(series['ranks'][1:]) - 1 if len(series['ranks']) > 1 else 0
+                            last_rank = series['ranks'][-1]
+                            
+                            # 实时排名
+                            realtime_rank = realtime_rankings[name]['rank']
+                            realtime_change = realtime_rankings[name]['change_pct']
+                            
+                            # 创建细直线trace（从最后历史点到实时点）
+                            realtime_trace = {
+                                'x': [last_x, last_x + 1],
+                                'y': [last_rank, realtime_rank],
+                                'name': f'{name}',  # 不加(实时)后缀，保持一致
+                                'type': 'scatter',
+                                'mode': 'lines',
+                                'line': {
+                                    'width': line_width * 0.5,  # 更细的线条
+                                    'color': color
+                                },
+                                'showlegend': False,  # 不在图例中显示
+                                'legendgroup': name,  # 与历史数据同组
+                                'hoverinfo': 'skip',  # 不显示悬停信息，避免历史点被覆盖
+                                'is_realtime': True,  # 标记这是实时数据
+                                'realtime_change': realtime_change  # 存储实时涨跌幅
+                            }
+                            traces.append(realtime_trace)
+                            
+                            # 添加实时数据点标记
+                            marker_trace = {
+                                'x': [last_x + 1],
+                                'y': [realtime_rank],
+                                'name': f'{name}',
+                                'type': 'scatter',
+                                'mode': 'markers',
+                                'marker': {
+                                    'size': 8,
+                                    'color': color,
+                                    'symbol': 'circle'
+                                },
+                                'showlegend': False,
+                                'legendgroup': name,  # 与历史和实时线同组
+                                'hovertemplate': f"<b>{name} (实时)</b><br>" +
+                                                "实时排名: %{y}<br>" +
+                                                "实时涨跌幅: " + f"{realtime_change:.2f}%<br>" +
+                                                "<extra></extra>"
+                            }
+                            traces.append(marker_trace)
+                    
+                    # 如果有实时数据，扩展日期列表
+                    dates = dates + ['实时']
             
             all_periods_traces.append({
                 'period': period_data['period'],
@@ -231,7 +373,8 @@ class RankingVisualizer:
             height=height,
             total_indices=total_indices,
             show_grid=show_grid,
-            line_width=line_width
+            line_width=line_width,
+            realtime_timestamp=realtime_timestamp
         )
         
         # 写入文件
@@ -245,7 +388,7 @@ class RankingVisualizer:
             return False
     
     def _generate_html_template(self, title: str, traces_json: str, dates_json: str, width: int, 
-                                height: int, total_indices: int, show_grid: bool) -> str:
+                                height: int, total_indices: int, show_grid: bool, realtime_timestamp=None) -> str:
         """
         生成HTML模板
         
@@ -395,6 +538,10 @@ class RankingVisualizer:
                     <div class="info-label">交易日数量</div>
                     <div class="info-value" id="trading-days">-</div>
                 </div>
+                <div class="info-item" id="realtime-info" style="display: none;">
+                    <div class="info-label">实时数据时间</div>
+                    <div class="info-value" id="realtime-time" style="font-size: 14px;">-</div>
+                </div>
             </div>
         </div>
         
@@ -407,12 +554,27 @@ class RankingVisualizer:
         // 数据
         const traces = {traces_json};
         const dates = {dates_json};  // 日期列表
+        const realtimeTimestamp = {'null' if realtime_timestamp is None else f'"{realtime_timestamp}"'};
         
         // 更新信息面板
         if (dates.length > 0) {{
             document.getElementById('start-date').textContent = dates[0];
             document.getElementById('end-date').textContent = dates[dates.length - 1];
             document.getElementById('trading-days').textContent = dates.length;
+        }}
+        
+        // 显示实时数据时间
+        if (realtimeTimestamp && realtimeTimestamp !== 'null') {{
+            document.getElementById('realtime-info').style.display = 'block';
+            const realtimeDate = new Date(realtimeTimestamp);
+            document.getElementById('realtime-time').textContent = realtimeDate.toLocaleString('zh-CN', {{
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            }});
         }}
         
         // 设置当前时间
@@ -572,7 +734,8 @@ class RankingVisualizer:
         return html_template
     
     def _generate_multi_chart_template(self, all_periods_traces: list, width: int, 
-                                      height: int, total_indices: int, show_grid: bool, line_width: int = 2) -> str:
+                                      height: int, total_indices: int, show_grid: bool, line_width: int = 2, 
+                                      realtime_timestamp=None) -> str:
         """
         生成多图表HTML模板
         
@@ -583,6 +746,7 @@ class RankingVisualizer:
             total_indices: 总指数数量
             show_grid: 是否显示网格
             line_width: 线条宽度
+            realtime_timestamp: 实时数据时间戳
             
         Returns:
             HTML内容字符串
@@ -607,13 +771,15 @@ class RankingVisualizer:
 '''
             
             # 添加图表渲染脚本
+            # 使用JSON编码title以避免JavaScript字符串转义问题
+            title_json = json.dumps(title, ensure_ascii=False)
             charts_script += f'''
         // 渲染图表 {idx + 1}: {title}
         renderSingleChart(
             '{chart_id}',
             {traces_json},
             {dates_json},
-            '{title}',
+            {title_json},
             {total_indices}
         );
 '''
@@ -717,6 +883,9 @@ class RankingVisualizer:
         
         <div class="footer">
             <p>🚀 DWAD 股池指数分析系统 · 数据更新时间: <span id="update-time"></span></p>
+            <p id="realtime-info" style="display: none; margin-top: 10px; color: #28a745; font-weight: bold;">
+                📡 实时数据时间: <span id="realtime-time"></span> (虚线部分为实时数据)
+            </p>
         </div>
     </div>
     
@@ -725,12 +894,55 @@ class RankingVisualizer:
         const now = new Date();
         document.getElementById('update-time').textContent = now.toLocaleString('zh-CN');
         
+        // 显示实时数据时间
+        const realtimeTimestamp = {'null' if realtime_timestamp is None else f'"{realtime_timestamp}"'};
+        if (realtimeTimestamp && realtimeTimestamp !== 'null') {{
+            document.getElementById('realtime-info').style.display = 'block';
+            const realtimeDate = new Date(realtimeTimestamp);
+            document.getElementById('realtime-time').textContent = realtimeDate.toLocaleString('zh-CN', {{
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            }});
+        }}
+        
         // 通用图表渲染函数
         function renderSingleChart(chartId, traces, dates, title, totalIndices) {{
             // 为每条线生成标签注释
             const annotations = [];
             
-            traces.forEach((trace, idx) => {{
+            // 先收集每个指数的历史trace和实时trace
+            const tracesByName = {{}};
+            traces.forEach((trace) => {{
+                if (trace.showlegend !== false && !trace.is_realtime) {{
+                    // 这是历史数据trace
+                    tracesByName[trace.name] = {{
+                        historical: trace,
+                        realtime: null
+                    }};
+                }} else if (trace.is_realtime) {{
+                    // 这是实时数据trace
+                    if (!tracesByName[trace.name]) {{
+                        tracesByName[trace.name] = {{
+                            historical: null,
+                            realtime: trace
+                        }};
+                    }} else {{
+                        tracesByName[trace.name].realtime = trace;
+                    }}
+                }}
+            }});
+            
+            // 为每个指数生成标注
+            Object.keys(tracesByName).forEach((name) => {{
+                const data = tracesByName[name];
+                const trace = data.historical;
+                
+                if (!trace) return;
+                
                 // 1. 在折线的多个位置放置标签（保留原有功能）
                 for (let i = 1; i <= 4; i++) {{
                     const pointIdx = Math.floor(trace.x.length * i / 5);
@@ -753,17 +965,33 @@ class RankingVisualizer:
                     }}
                 }}
                 
-                // 2. 在终点右侧添加带涨幅的标注（新功能）
-                const lastIdx = trace.x.length - 1;
-                const lastChange = trace.customdata[lastIdx][1];
-                const changeText = lastChange >= 0 ? `+${{lastChange.toFixed(2)}}%` : `${{lastChange.toFixed(2)}}%`;
+                // 2. 在终点右侧添加带涨幅的标注
+                // 如果有实时数据，使用实时数据点；否则使用历史数据最后一点
+                let labelX, labelY, changeValue;
+                
+                if (data.realtime) {{
+                    // 使用实时数据点
+                    labelX = data.realtime.x[data.realtime.x.length - 1];
+                    labelY = data.realtime.y[data.realtime.y.length - 1];
+                    changeValue = data.realtime.realtime_change;
+                }} else if (trace.customdata && trace.customdata.length > 0) {{
+                    // 使用历史数据最后一点
+                    const lastIdx = trace.x.length - 1;
+                    labelX = trace.x[lastIdx];
+                    labelY = trace.y[lastIdx];
+                    changeValue = trace.customdata[lastIdx][1];
+                }} else {{
+                    return;  // 没有数据，跳过
+                }}
+                
+                const changeText = changeValue >= 0 ? `+${{changeValue.toFixed(2)}}%` : `${{changeValue.toFixed(2)}}%`;
                 
                 annotations.push({{
-                    x: trace.x[lastIdx],
-                    y: trace.y[lastIdx],
+                    x: labelX,
+                    y: labelY,
                     xref: 'x',
                     yref: 'y',
-                    text: `${{trace.name}} ${{changeText}}`,
+                    text: `${{name}} ${{changeText}}`,
                     xanchor: 'left',
                     yanchor: 'middle',
                     showarrow: false,

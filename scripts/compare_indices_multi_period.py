@@ -44,9 +44,9 @@ def main():
     logger.info("="*70)
     
     try:
-        # 1. 初始化比较器
+        # 1. 初始化比较器（启用实时价格功能）
         logger.info("\n步骤 1/4: 初始化指数比较器...")
-        comparator = IndexComparator()
+        comparator = IndexComparator(enable_realtime=True)
         
         # 2. 加载并计算排名
         logger.info("\n步骤 2/4: 加载指数数据并计算排名...")

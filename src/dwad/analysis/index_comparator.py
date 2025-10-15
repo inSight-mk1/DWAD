@@ -11,23 +11,36 @@ from typing import List, Dict, Optional, Tuple
 from loguru import logger
 
 from ..data_storage.parquet_storage import ParquetStorage
+from ..data_fetcher.realtime_price_fetcher import RealtimePriceFetcher
 from ..utils.config import config
 
 
 class IndexComparator:
     """股池指数比较器"""
     
-    def __init__(self, comparison_config_path: Optional[str] = None):
+    def __init__(self, comparison_config_path: Optional[str] = None, enable_realtime: bool = False):
         """
         初始化指数比较器
         
         Args:
             comparison_config_path: 比较配置文件路径，如果为None则使用默认配置
+            enable_realtime: 是否启用实时价格功能
         """
         self.storage = ParquetStorage()
         self.comparison_config = self._load_comparison_config(comparison_config_path)
         self.indices_data = {}
         self.comparison_result = None
+        self.enable_realtime = enable_realtime
+        self.realtime_fetcher = None
+        self.realtime_prices_cache = {}  # 缓存实时价格数据，避免重复API调用
+        
+        if enable_realtime:
+            try:
+                self.realtime_fetcher = RealtimePriceFetcher()
+                logger.info("实时价格功能已启用")
+            except Exception as e:
+                logger.warning(f"实时价格功能初始化失败: {e}，将仅使用历史数据")
+                self.enable_realtime = False
         
     def _load_comparison_config(self, config_path: Optional[str] = None) -> dict:
         """
@@ -188,6 +201,54 @@ class IndexComparator:
             logger.info(f"数据归一化完成，共 {len(result_df)} 个交易日")
         return result_df
     
+    def _resolve_tied_rankings(self, change_data: pd.DataFrame, previous_rankings: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+        """
+        解决并列排名，确保每个指数有唯一排名
+        
+        当涨跌幅相同时，通过以下顺序打破并列：
+        1. 比较前一天的排名，排名靠前的优先
+        2. 如果没有历史排名或仍然相同，按照指数名称字母顺序
+        
+        Args:
+            change_data: 涨跌幅数据 DataFrame
+            previous_rankings: 前一天的排名 DataFrame（可选）
+        
+        Returns:
+            解决并列后的排名 DataFrame
+        """
+        import random
+        
+        rankings = pd.DataFrame(index=change_data.index, columns=change_data.columns)
+        
+        for date in change_data.index:
+            # 获取该日所有指数的涨跌幅
+            day_changes = change_data.loc[date].copy()
+            
+            # 创建一个列表来存储 (指数名, 涨跌幅, 前一天排名)
+            ranking_data = []
+            for col in day_changes.index:
+                change_pct = day_changes[col]
+                prev_rank = None
+                
+                # 尝试获取前一天的排名
+                if previous_rankings is not None:
+                    date_idx = change_data.index.get_loc(date)
+                    if date_idx > 0:
+                        prev_date = change_data.index[date_idx - 1]
+                        if prev_date in previous_rankings.index and col in previous_rankings.columns:
+                            prev_rank = previous_rankings.loc[prev_date, col]
+                
+                ranking_data.append((col, change_pct, prev_rank if prev_rank is not None else 999))
+            
+            # 排序：首先按涨跌幅降序，然后按前一天排名升序，最后按名称
+            ranking_data.sort(key=lambda x: (-x[1], x[2], x[0]))
+            
+            # 分配排名
+            for rank, (col, _, _) in enumerate(ranking_data, 1):
+                rankings.loc[date, col] = rank
+        
+        return rankings
+    
     def calculate_rankings(self, period: Optional[int] = None) -> pd.DataFrame:
         """
         计算每个交易日的排名
@@ -222,8 +283,8 @@ class IndexComparator:
             # 提取涨跌幅数据用于排名计算
             change_data = aligned_df[change_columns].copy()
             
-            # 计算每个交易日的排名（对每一行进行排名，axis=1）
-            rankings = change_data.rank(axis=1, ascending=False, method='min')
+            # 计算每个交易日的排名，并解决并列问题
+            rankings = self._resolve_tied_rankings(change_data)
             
             # 将排名结果添加到结果DataFrame
             for col in change_columns:
@@ -299,8 +360,8 @@ class IndexComparator:
         # 提取涨跌幅列
         change_columns = [col for col in change_df.columns if col.endswith('_pct')]
         
-        # 对每一天的涨跌幅进行排名
-        rankings = change_df[change_columns].rank(axis=1, ascending=False, method='min')
+        # 对每一天的涨跌幅进行排名，并解决并列问题
+        rankings = self._resolve_tied_rankings(change_df[change_columns])
         
         # 添加排名和涨跌幅数据
         for col in change_columns:
@@ -352,17 +413,22 @@ class IndexComparator:
                 change_pct = ranking_df.loc[latest_date, f'{display_name}_pct']
                 logger.info(f"  {int(rank)}. {display_name}: {change_pct:+.2f}%")
     
-    def get_ranking_data_for_visualization(self, periods: list = None) -> Dict[str, any]:
+    def get_ranking_data_for_visualization(self, periods: list = None, include_realtime: bool = None) -> Dict[str, any]:
         """
         获取用于可视化的排名数据（支持多周期）
         
         Args:
             periods: 周期列表，例如 [20, 55, 233] 表示近20、55、233个交易日
                     如果为None，则返回全部数据
+            include_realtime: 是否包含实时数据，如果为None则根据enable_realtime自动决定
         
         Returns:
             包含可视化所需数据的字典
         """
+        # 确定是否包含实时数据
+        if include_realtime is None:
+            include_realtime = self.enable_realtime
+        
         # 如果没有指定周期，使用全部数据
         if periods is None:
             if self.comparison_result is None:
@@ -392,16 +458,34 @@ class IndexComparator:
                     'changes': changes
                 })
             
-            return {
+            result = {
                 'dates': dates,
                 'series': series_data,
                 'total_indices': total_indices,
                 'config': self.comparison_config.get('visualization', {})
             }
+            
+            # 添加实时数据（使用全部数据周期，从起始日期到现在）
+            if include_realtime:
+                # 计算从起始日期到现在的天数作为period
+                realtime_period = len(dates) if dates else None
+                realtime_ranking = self.get_realtime_ranking(period=realtime_period)
+                if realtime_ranking:
+                    result['realtime'] = realtime_ranking
+            
+            return result
         
         # 对于多周期分析，分别计算每个周期的排名
         periods_data = []
         total_indices = len(self.indices_data)
+        
+        # 如果启用实时功能，先一次性获取所有实时价格并缓存
+        if include_realtime:
+            logger.info("批量获取实时价格数据（用于所有周期）...")
+            self.realtime_prices_cache, _ = self._fetch_all_realtime_prices()
+            if not self.realtime_prices_cache:
+                logger.warning("无法获取实时价格，将不包含实时数据")
+                include_realtime = False
         
         for period in periods:
             logger.info(f"  计算近{period}个交易日的排名...")
@@ -430,19 +514,36 @@ class IndexComparator:
                     'changes': changes
                 })
             
-            periods_data.append({
+            period_data = {
                 'period': period,
                 'title': f'近{period}个交易日排名趋势（基于该周期内涨跌幅）',
                 'dates': dates,
                 'series': series_data,
                 'total_indices': total_indices
-            })
+            }
+            
+            # 如果启用实时功能，计算该周期的实时排名（使用缓存的价格数据）
+            if include_realtime:
+                realtime_ranking = self.get_realtime_ranking(
+                    period=period, 
+                    use_cache=True,
+                    historical_rankings=period_df  # 传递历史排名数据
+                )
+                if realtime_ranking:
+                    period_data['realtime'] = realtime_ranking
+            
+            periods_data.append(period_data)
         
-        return {
+        result = {
             'periods': periods_data,
             'total_indices': total_indices,
             'config': self.comparison_config.get('visualization', {})
         }
+        
+        # 清空缓存，避免下次调用使用过期数据
+        self.realtime_prices_cache = {}
+        
+        return result
     
     def export_ranking_to_csv(self, output_path: Optional[str] = None) -> bool:
         """
@@ -505,3 +606,292 @@ class IndexComparator:
         logger.info("="*60)
         
         return True
+    
+    def _load_stock_pool_config(self, pool_name: str, concept_name: str) -> List[str]:
+        """
+        加载股池配置，获取股票代码列表
+        
+        Args:
+            pool_name: 股池名称
+            concept_name: 概念名称
+        
+        Returns:
+            股票代码列表
+        """
+        try:
+            # 尝试从配置中获取股池配置文件路径
+            stock_pools_config_path = config.get('stock_pools_config_path')
+            if stock_pools_config_path is None:
+                # 使用默认路径
+                stock_pools_config_path = Path(__file__).parent.parent.parent.parent / "config" / "stock_pools.yaml"
+            else:
+                stock_pools_config_path = Path(stock_pools_config_path)
+            
+            if not stock_pools_config_path.exists():
+                logger.error(f"股池配置文件不存在: {stock_pools_config_path}")
+                return []
+            
+            with open(stock_pools_config_path, 'r', encoding='utf-8') as f:
+                pools_config = yaml.safe_load(f)
+            
+            stock_pools = pools_config.get('stock_pools', {})
+            if pool_name not in stock_pools:
+                logger.error(f"股池配置中未找到股池: {pool_name}")
+                return []
+            
+            if concept_name not in stock_pools[pool_name]:
+                logger.error(f"股池 {pool_name} 中未找到概念: {concept_name}")
+                return []
+            
+            stock_names = stock_pools[pool_name][concept_name]
+            
+            # 将股票名称转换为代码
+            stock_info_df = self.storage.load_stock_info()
+            if stock_info_df.empty:
+                logger.error("无法加载股票基本信息")
+                return []
+            
+            symbols = []
+            for name in stock_names:
+                # 使用 regex=False 避免特殊字符（如 *ST 中的 *）被当作正则表达式
+                matched = stock_info_df[stock_info_df['name'].str.contains(name, na=False, regex=False)]
+                if not matched.empty:
+                    symbols.append(matched.iloc[0]['symbol'])
+                else:
+                    logger.warning(f"未找到股票 '{name}' 对应的代码")
+            
+            return symbols
+            
+        except Exception as e:
+            logger.error(f"加载股池配置失败: {e}")
+            return []
+    
+    def _fetch_all_realtime_prices(self) -> Tuple[Dict, str]:
+        """
+        一次性获取所有股池的实时价格（用于缓存）
+        
+        Returns:
+            (所有股池的实时价格字典, 最早时间戳)
+            格式: {display_name: {symbol: StockPrice, ...}, ...}
+        """
+        if not self.enable_realtime or self.realtime_fetcher is None:
+            logger.warning("实时价格功能未启用")
+            return {}, None
+        
+        if not self.indices_data:
+            logger.error("未加载指数数据，无法获取实时价格")
+            return {}, None
+        
+        logger.info("开始批量获取所有股池的实时价格（缓存用）...")
+        
+        all_prices = {}
+        all_timestamps = []
+        
+        for key, idx_info in self.indices_data.items():
+            pool_name = idx_info['pool_name']
+            concept_name = idx_info['concept_name']
+            display_name = idx_info['display_name']
+            
+            # 获取股池中的股票代码
+            symbols = self._load_stock_pool_config(pool_name, concept_name)
+            if not symbols:
+                logger.warning(f"股池 [{pool_name} - {concept_name}] 没有股票")
+                continue
+            
+            # 获取实时价格
+            prices, earliest_time = self.realtime_fetcher.get_pool_current_prices(symbols)
+            if not prices:
+                logger.warning(f"无法获取 [{display_name}] 的实时价格")
+                continue
+            
+            all_prices[display_name] = prices
+            all_timestamps.append(earliest_time)
+        
+        earliest_timestamp = min(all_timestamps) if all_timestamps else None
+        logger.info(f"批量获取实时价格完成，共 {len(all_prices)} 个股池")
+        
+        return all_prices, earliest_timestamp
+    
+    def get_realtime_ranking(self, period: Optional[int] = None, use_cache: bool = False, historical_rankings: Optional[pd.DataFrame] = None) -> Optional[Dict]:
+        """
+        获取实时排名数据
+        
+        Args:
+            period: 计算涨跌幅的周期（交易日数），如果为None则使用昨日收盘价作为基准
+                   如果指定，则使用period天前的收盘价作为基准
+            use_cache: 是否使用缓存的实时价格数据（用于多周期场景，避免重复API调用）
+            historical_rankings: 历史排名 DataFrame，用于打破实时排名并列
+        
+        Returns:
+            包含实时排名的字典，如果获取失败则返回None
+        """
+        if not self.enable_realtime or self.realtime_fetcher is None:
+            logger.warning("实时价格功能未启用")
+            return None
+        
+        if not self.indices_data:
+            logger.error("未加载指数数据，无法获取实时排名")
+            return None
+        
+        # 如果使用缓存且缓存为空，先获取实时价格
+        if use_cache and not self.realtime_prices_cache:
+            self.realtime_prices_cache, cached_timestamp = self._fetch_all_realtime_prices()
+            if not self.realtime_prices_cache:
+                logger.warning("无法获取实时价格缓存")
+                return None
+        
+        # 如果不使用缓存，直接获取实时价格
+        if not use_cache:
+            logger.info("开始获取实时排名...")
+        
+        realtime_data = {}
+        all_timestamps = []
+        
+        # 为每个指数获取实时价格并计算涨跌幅
+        for key, idx_info in self.indices_data.items():
+            pool_name = idx_info['pool_name']
+            concept_name = idx_info['concept_name']
+            display_name = idx_info['display_name']
+            
+            # 获取股池中的股票代码
+            symbols = self._load_stock_pool_config(pool_name, concept_name)
+            if not symbols:
+                logger.warning(f"股池 [{pool_name} - {concept_name}] 没有股票")
+                continue
+            
+            # 获取实时价格（使用缓存或直接获取）
+            if use_cache:
+                if display_name not in self.realtime_prices_cache:
+                    logger.warning(f"缓存中没有 [{display_name}] 的实时价格")
+                    continue
+                prices = self.realtime_prices_cache[display_name]
+                # 使用缓存时，时间戳从缓存数据中获取
+                if prices:
+                    earliest_time = list(prices.values())[0].created_at
+                    all_timestamps.append(earliest_time)
+            else:
+                prices, earliest_time = self.realtime_fetcher.get_pool_current_prices(symbols)
+                if not prices:
+                    logger.warning(f"无法获取 [{display_name}] 的实时价格")
+                    continue
+                all_timestamps.append(earliest_time)
+            
+            # 获取历史数据
+            historical_data = idx_info['data'].copy()
+            if historical_data.empty:
+                continue
+            
+            historical_data['date'] = pd.to_datetime(historical_data['date'])
+            historical_data = historical_data.sort_values('date')
+            
+            # 确定基准日期
+            if period is not None:
+                # 使用period天前的数据作为基准
+                if len(historical_data) < period:
+                    logger.warning(f"[{display_name}] 历史数据不足{period}天，跳过")
+                    continue
+                # 取倒数第period+1天的数据作为基准（因为最后一天是昨天收盘）
+                base_date_data = historical_data.iloc[-period]
+                base_date = base_date_data['date']
+                base_index_value = base_date_data['index_value']
+                logger.debug(f"[{display_name}] 使用{period}天前({base_date.strftime('%Y-%m-%d')})的指数值作为基准: {base_index_value:.2f}")
+            else:
+                # 使用昨日收盘作为基准
+                last_date = historical_data['date'].max()
+                base_date = last_date
+                base_index_value = historical_data[historical_data['date'] == last_date]['index_value'].iloc[0]
+                logger.debug(f"[{display_name}] 使用昨日({base_date.strftime('%Y-%m-%d')})的指数值作为基准: {base_index_value:.2f}")
+            
+            # 计算实时指数值
+            # 需要获取基准日期的收盘价和今日实时价
+            stock_data = self.storage.load_stock_info()
+            
+            # 获取基准日期的收盘价
+            base_prices = {}
+            for symbol in symbols:
+                stock_df = self.storage.load_stock_data(symbol)
+                if not stock_df.empty:
+                    stock_df['date'] = pd.to_datetime(stock_df['date'])
+                    base_data = stock_df[stock_df['date'] == pd.to_datetime(base_date)]
+                    if not base_data.empty:
+                        base_prices[symbol] = base_data.iloc[0]['close_price']
+            
+            # 计算实时平均涨跌幅
+            if base_prices:
+                changes = []
+                for symbol in symbols:
+                    if symbol in prices and symbol in base_prices:
+                        current_price = prices[symbol].price
+                        base_price = base_prices[symbol]
+                        if base_price > 0:
+                            change = ((current_price / base_price) - 1) * 100
+                            changes.append(change)
+                
+                if changes:
+                    avg_change = sum(changes) / len(changes)
+                    realtime_index_value = base_index_value * (1 + avg_change / 100)
+                    
+                    realtime_data[display_name] = {
+                        'index_value': realtime_index_value,
+                        'change_pct': avg_change,
+                        'base_value': base_index_value
+                    }
+        
+        if not realtime_data:
+            logger.warning("未能获取任何实时数据")
+            return None
+        
+        # 获取最后一个历史交易日的排名（用于打破并列）
+        last_historical_ranks = {}
+        
+        # 优先使用传入的历史排名
+        if historical_rankings is not None and not historical_rankings.empty:
+            last_date = historical_rankings.index[-1]
+            for col in historical_rankings.columns:
+                if not col.endswith('_value') and not col.endswith('_pct'):
+                    last_historical_ranks[col] = historical_rankings.loc[last_date, col]
+        else:
+            # 如果没有传入，尝试从 self.comparison_result 获取
+            for key, idx_info in self.indices_data.items():
+                display_name = idx_info['display_name']
+                if display_name in realtime_data:
+                    historical_data = idx_info['data'].copy()
+                    if not historical_data.empty:
+                        historical_data['date'] = pd.to_datetime(historical_data['date'])
+                        last_date = historical_data['date'].max()
+                        
+                        # 尝试从已计算的排名结果中获取
+                        if self.comparison_result is not None and not self.comparison_result.empty:
+                            if last_date in self.comparison_result.index and display_name in self.comparison_result.columns:
+                                last_historical_ranks[display_name] = self.comparison_result.loc[last_date, display_name]
+        
+        # 计算实时排名，打破并列
+        # 创建排序数据：(指数名, 涨跌幅, 历史排名)
+        changes_list = []
+        for name, data in realtime_data.items():
+            change_pct = data['change_pct']
+            hist_rank = last_historical_ranks.get(name, 999)  # 没有历史排名的给一个很大的值
+            changes_list.append((name, change_pct, hist_rank))
+        
+        # 排序：首先按涨跌幅降序，然后按历史排名升序，最后按名称字母顺序
+        changes_list.sort(key=lambda x: (-x[1], x[2], x[0]))
+        
+        realtime_rankings = {}
+        for rank, (name, change, _) in enumerate(changes_list, 1):
+            realtime_rankings[name] = {
+                'rank': rank,
+                'change_pct': change,
+                'index_value': realtime_data[name]['index_value']
+            }
+        
+        # 找到最早的时间戳
+        earliest_timestamp = min(all_timestamps) if all_timestamps else None
+        
+        period_desc = f"近{period}日" if period else "当天"
+        logger.info(f"实时排名计算完成，共 {len(realtime_rankings)} 个指数（基于{period_desc}涨跌幅）")
+        logger.info(f"实时数据时间: {earliest_timestamp}")
+        
+        return {
+            'rankings': realtime_rankings,
+            'timestamp': earliest_timestamp
+        }
