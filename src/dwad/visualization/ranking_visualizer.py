@@ -89,15 +89,22 @@ class RankingVisualizer:
         series_list = ranking_data['series']
         total_indices = ranking_data['total_indices']
         
+        # 获取日期列表（用于x轴标签）
+        first_series = series_list[0]
+        dates = first_series['dates'][1:] if len(first_series['dates']) > 1 else first_series['dates']
+        
         for idx, series in enumerate(series_list):
             color = self.colors[idx % len(self.colors)]
             # 跳过第一个数据点（第一天所有指数涨跌幅都是0%，排名无意义）
-            dates = series['dates'][1:] if len(series['dates']) > 1 else series['dates']
+            series_dates = series['dates'][1:] if len(series['dates']) > 1 else series['dates']
             ranks = series['ranks'][1:] if len(series['ranks']) > 1 else series['ranks']
             changes = series['changes'][1:] if len(series['changes']) > 1 else series['changes']
             
+            # 使用交易日索引作为x轴（从0开始）
+            x_values = list(range(len(ranks)))
+            
             trace = {
-                'x': dates,
+                'x': x_values,
                 'y': ranks,
                 'name': series['name'],
                 'type': 'scatter',
@@ -106,11 +113,11 @@ class RankingVisualizer:
                     'width': line_width,
                     'color': color
                 },
-                'customdata': changes,  # 添加涨跌幅数据
+                'customdata': [[date, change] for date, change in zip(series_dates, changes)],  # 添加日期和涨跌幅数据
                 'hovertemplate': f"<b>{series['name']}</b><br>" +
-                                "日期: %{x}<br>" +
+                                "日期: %{customdata[0]}<br>" +
                                 "排名: %{y}<br>" +
-                                "涨跌幅: %{customdata:.2f}%<br>" +
+                                "涨跌幅: %{customdata[1]:.2f}%<br>" +
                                 "<extra></extra>"
             }
             traces.append(trace)
@@ -120,6 +127,7 @@ class RankingVisualizer:
         html_content = self._generate_html_template(
             title=title,
             traces_json=json.dumps(traces, ensure_ascii=False, indent=2),
+            dates_json=json.dumps(dates, ensure_ascii=False),  # 传递日期列表用于x轴标签
             width=width,
             height=height,
             total_indices=total_indices,
@@ -176,15 +184,22 @@ class RankingVisualizer:
             traces = []
             series_list = period_data['series']
             
+            # 获取日期列表（用于x轴标签）
+            first_series = series_list[0]
+            dates = first_series['dates'][1:] if len(first_series['dates']) > 1 else first_series['dates']
+            
             for idx, series in enumerate(series_list):
                 color = self.colors[idx % len(self.colors)]
                 # 跳过第一个数据点（第一天所有指数涨跌幅都是0%，排名无意义）
-                dates = series['dates'][1:] if len(series['dates']) > 1 else series['dates']
+                series_dates = series['dates'][1:] if len(series['dates']) > 1 else series['dates']
                 ranks = series['ranks'][1:] if len(series['ranks']) > 1 else series['ranks']
                 changes = series['changes'][1:] if len(series['changes']) > 1 else series['changes']
                 
+                # 使用交易日索引作为x轴（从0开始）
+                x_values = list(range(len(ranks)))
+                
                 trace = {
-                    'x': dates,
+                    'x': x_values,
                     'y': ranks,
                     'name': series['name'],
                     'type': 'scatter',
@@ -193,11 +208,11 @@ class RankingVisualizer:
                         'width': line_width,
                         'color': color
                     },
-                    'customdata': changes,  # 添加涨跌幅数据
+                    'customdata': [[date, change] for date, change in zip(series_dates, changes)],  # 添加日期和涨跌幅数据
                     'hovertemplate': f"<b>{series['name']}</b><br>" +
-                                    "日期: %{x}<br>" +
+                                    "日期: %{customdata[0]}<br>" +
                                     "排名: %{y}<br>" +
-                                    "涨跌幅: %{customdata:.2f}%<br>" +
+                                    "涨跌幅: %{customdata[1]:.2f}%<br>" +
                                     "<extra></extra>"
                 }
                 traces.append(trace)
@@ -205,7 +220,8 @@ class RankingVisualizer:
             all_periods_traces.append({
                 'period': period_data['period'],
                 'title': period_data['title'],
-                'traces': traces
+                'traces': traces,
+                'dates': dates  # 添加日期列表
             })
         
         # 生成多图表HTML
@@ -214,7 +230,8 @@ class RankingVisualizer:
             width=width,
             height=height,
             total_indices=total_indices,
-            show_grid=show_grid
+            show_grid=show_grid,
+            line_width=line_width
         )
         
         # 写入文件
@@ -227,7 +244,7 @@ class RankingVisualizer:
             logger.error(f"生成HTML文件失败: {e}")
             return False
     
-    def _generate_html_template(self, title: str, traces_json: str, width: int, 
+    def _generate_html_template(self, title: str, traces_json: str, dates_json: str, width: int, 
                                 height: int, total_indices: int, show_grid: bool) -> str:
         """
         生成HTML模板
@@ -267,7 +284,7 @@ class RankingVisualizer:
         }}
         
         .container {{
-            max-width: {width + 100}px;
+            max-width: 98%;
             margin: 0 auto;
             background: white;
             border-radius: 12px;
@@ -300,7 +317,7 @@ class RankingVisualizer:
         
         #chart {{
             width: 100%;
-            height: {height}px;
+            min-height: {height}px;
         }}
         
         .info-panel {{
@@ -389,12 +406,13 @@ class RankingVisualizer:
     <script>
         // 数据
         const traces = {traces_json};
+        const dates = {dates_json};  // 日期列表
         
         // 更新信息面板
-        if (traces.length > 0 && traces[0].x.length > 0) {{
-            document.getElementById('start-date').textContent = traces[0].x[0];
-            document.getElementById('end-date').textContent = traces[0].x[traces[0].x.length - 1];
-            document.getElementById('trading-days').textContent = traces[0].x.length;
+        if (dates.length > 0) {{
+            document.getElementById('start-date').textContent = dates[0];
+            document.getElementById('end-date').textContent = dates[dates.length - 1];
+            document.getElementById('trading-days').textContent = dates.length;
         }}
         
         // 设置当前时间
@@ -421,7 +439,36 @@ class RankingVisualizer:
                 showgrid: {str(show_grid).lower()},
                 gridcolor: '#e9ecef',
                 tickangle: -45,
-                type: 'date'
+                tickmode: 'array',
+                tickvals: (() => {{
+                    // 自动选择合适的刻度间隔
+                    const total = dates.length;
+                    const maxTicks = 15;  // 最多显示15个刻度
+                    const step = Math.ceil(total / maxTicks);
+                    const vals = [];
+                    for (let i = 0; i < total; i += step) {{
+                        vals.push(i);
+                    }}
+                    // 确保包含最后一个点
+                    if (vals[vals.length - 1] !== total - 1) {{
+                        vals.push(total - 1);
+                    }}
+                    return vals;
+                }})(),
+                ticktext: (() => {{
+                    const total = dates.length;
+                    const maxTicks = 15;
+                    const step = Math.ceil(total / maxTicks);
+                    const texts = [];
+                    for (let i = 0; i < total; i += step) {{
+                        texts.push(dates[i]);
+                    }}
+                    // 确保包含最后一个日期
+                    if (texts.length === 0 || dates[texts.length - 1] !== dates[total - 1]) {{
+                        texts.push(dates[total - 1]);
+                    }}
+                    return texts;
+                }})()
             }},
             yaxis: {{
                 title: {{
@@ -525,7 +572,7 @@ class RankingVisualizer:
         return html_template
     
     def _generate_multi_chart_template(self, all_periods_traces: list, width: int, 
-                                      height: int, total_indices: int, show_grid: bool) -> str:
+                                      height: int, total_indices: int, show_grid: bool, line_width: int = 2) -> str:
         """
         生成多图表HTML模板
         
@@ -535,6 +582,7 @@ class RankingVisualizer:
             height: 每个图表的高度
             total_indices: 总指数数量
             show_grid: 是否显示网格
+            line_width: 线条宽度
             
         Returns:
             HTML内容字符串
@@ -548,6 +596,7 @@ class RankingVisualizer:
             period = period_data['period']
             title = period_data['title']
             traces_json = json.dumps(period_data['traces'], ensure_ascii=False, indent=2)
+            dates_json = json.dumps(period_data['dates'], ensure_ascii=False)  # 添加日期列表
             
             # 添加图表容器
             charts_html += f'''
@@ -563,6 +612,7 @@ class RankingVisualizer:
         renderSingleChart(
             '{chart_id}',
             {traces_json},
+            {dates_json},
             '{title}',
             {total_indices}
         );
@@ -592,7 +642,7 @@ class RankingVisualizer:
         }}
         
         .container {{
-            max-width: {width + 100}px;
+            max-width: 98%;
             margin: 0 auto;
             background: white;
             border-radius: 12px;
@@ -638,7 +688,7 @@ class RankingVisualizer:
         
         .chart {{
             width: 100%;
-            height: {height}px;
+            min-height: {height}px;
         }}
         
         .footer {{
@@ -676,7 +726,58 @@ class RankingVisualizer:
         document.getElementById('update-time').textContent = now.toLocaleString('zh-CN');
         
         // 通用图表渲染函数
-        function renderSingleChart(chartId, traces, title, totalIndices) {{
+        function renderSingleChart(chartId, traces, dates, title, totalIndices) {{
+            // 为每条线生成标签注释
+            const annotations = [];
+            
+            traces.forEach((trace, idx) => {{
+                // 1. 在折线的多个位置放置标签（保留原有功能）
+                for (let i = 1; i <= 4; i++) {{
+                    const pointIdx = Math.floor(trace.x.length * i / 5);
+                    if (pointIdx < trace.x.length) {{
+                        annotations.push({{
+                            x: trace.x[pointIdx],
+                            y: trace.y[pointIdx],
+                            xref: 'x',
+                            yref: 'y',
+                            text: trace.name,
+                            showarrow: false,
+                            font: {{
+                                size: 9,
+                                color: trace.line.color
+                            }},
+                            bgcolor: 'rgba(255, 255, 255, 0.7)',
+                            borderpad: 2,
+                            opacity: 0.8
+                        }});
+                    }}
+                }}
+                
+                // 2. 在终点右侧添加带涨幅的标注（新功能）
+                const lastIdx = trace.x.length - 1;
+                const lastChange = trace.customdata[lastIdx][1];
+                const changeText = lastChange >= 0 ? `+${{lastChange.toFixed(2)}}%` : `${{lastChange.toFixed(2)}}%`;
+                
+                annotations.push({{
+                    x: trace.x[lastIdx],
+                    y: trace.y[lastIdx],
+                    xref: 'x',
+                    yref: 'y',
+                    text: `${{trace.name}} ${{changeText}}`,
+                    xanchor: 'left',
+                    yanchor: 'middle',
+                    showarrow: false,
+                    font: {{
+                        size: 10,
+                        color: trace.line.color,
+                        weight: 'bold'
+                    }},
+                    xshift: 5,
+                    bgcolor: 'rgba(255, 255, 255, 0.9)',
+                    borderpad: 3
+                }});
+            }});
+            
             const layout = {{
                 title: {{
                     text: '',
@@ -696,7 +797,36 @@ class RankingVisualizer:
                     showgrid: {str(show_grid).lower()},
                     gridcolor: '#e9ecef',
                     tickangle: -45,
-                    type: 'date'
+                    tickmode: 'array',
+                    tickvals: (() => {{
+                        // 自动选择合适的刻度间隔
+                        const total = dates.length;
+                        const maxTicks = 15;  // 最多显示15个刻度
+                        const step = Math.ceil(total / maxTicks);
+                        const vals = [];
+                        for (let i = 0; i < total; i += step) {{
+                            vals.push(i);
+                        }}
+                        // 确保包含最后一个点
+                        if (vals[vals.length - 1] !== total - 1) {{
+                            vals.push(total - 1);
+                        }}
+                        return vals;
+                    }})(),
+                    ticktext: (() => {{
+                        const total = dates.length;
+                        const maxTicks = 15;
+                        const step = Math.ceil(total / maxTicks);
+                        const texts = [];
+                        for (let i = 0; i < total; i += step) {{
+                            texts.push(dates[i]);
+                        }}
+                        // 确保包含最后一个日期
+                        if (texts.length === 0 || dates[texts.length - 1] !== dates[total - 1]) {{
+                            texts.push(dates[total - 1]);
+                        }}
+                        return texts;
+                    }})()
                 }},
                 yaxis: {{
                     title: {{
@@ -713,6 +843,7 @@ class RankingVisualizer:
                     dtick: 1,
                     range: [totalIndices + 0.5, 0.5]
                 }},
+                annotations: annotations,
                 hovermode: 'closest',
                 showlegend: true,
                 legend: {{
@@ -727,12 +858,11 @@ class RankingVisualizer:
                 }},
                 margin: {{
                     l: 50,
-                    r: 50,
+                    r: 150,
                     t: 30,
                     b: 100
                 }},
-                width: {width},
-                height: {height},
+                autosize: true,
                 plot_bgcolor: '#ffffff',
                 paper_bgcolor: '#ffffff',
                 font: {{
@@ -750,15 +880,44 @@ class RankingVisualizer:
                 toImageButtonOptions: {{
                     format: 'png',
                     filename: chartId,
-                    height: {height},
-                    width: {width},
                     scale: 2
                 }}
             }};
             
-            Plotly.newPlot(chartId, traces, layout, config)
+            // 使用Plotly.react以支持响应式调整
+            Plotly.react(chartId, traces, layout, config)
                 .then(() => {{
                     console.log('✅ 图表加载完成:', chartId);
+                    
+                    // 添加点击事件：点击线条时加粗并显示数据点
+                    const chartElement = document.getElementById(chartId);
+                    const clickedTraces = new Set();  // 记录哪些线被点击了
+                    
+                    chartElement.on('plotly_click', function(data) {{
+                        const pointData = data.points[0];
+                        const traceIndex = pointData.curveNumber;
+                        
+                        // 切换该线的状态
+                        if (clickedTraces.has(traceIndex)) {{
+                            // 已被点击过，恢复原状
+                            clickedTraces.delete(traceIndex);
+                            Plotly.restyle(chartId, {{
+                                'mode': 'lines',
+                                'line.width': {line_width}
+                            }}, [traceIndex]);
+                        }} else {{
+                            // 未被点击，加粗并显示数据点
+                            clickedTraces.add(traceIndex);
+                            Plotly.restyle(chartId, {{
+                                'mode': 'lines+markers',
+                                'line.width': {line_width * 2},
+                                'marker.size': 6
+                            }}, [traceIndex]);
+                        }}
+                    }});
+                    
+                    // 提示用户可以点击
+                    console.log('💡 提示: 点击线条可以加粗并显示数据点，再次点击可恢复');
                 }})
                 .catch((err) => {{
                     console.error('❌ 图表渲染失败:', chartId, err);

@@ -44,6 +44,34 @@ indices_to_compare:
   - pool_name: "大概念股池"
     concept_name: "软件开发"
     display_name: "软件开发"
+    
+  - pool_name: "大概念股池"
+    concept_name: "CSSW证券"
+    display_name: "CSSW证券"
+    
+  - pool_name: "大概念股池"
+    concept_name: "中证银行"
+    display_name: "中证银行"
+    
+  - pool_name: "大概念股池"
+    concept_name: "中证煤炭"
+    display_name: "中证煤炭"
+    
+  - pool_name: "大概念股池"
+    concept_name: "低空经济"
+    display_name: "低空经济"
+    
+  - pool_name: "大概念股池"
+    concept_name: "固态电池"
+    display_name: "固态电池"
+    
+  - pool_name: "大概念股池"
+    concept_name: "轨交设备"
+    display_name: "轨交设备"
+    
+  - pool_name: "大概念股池"
+    concept_name: "中证汽车"
+    display_name: "中证汽车"
 
 # 可视化配置
 visualization:
