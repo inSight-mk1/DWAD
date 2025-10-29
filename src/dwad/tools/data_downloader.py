@@ -227,93 +227,156 @@ class DataDownloader:
             pbar.update(1)
 
         return success_count
+    
+    def _refresh_batch_silent(self, symbols: List[str], start_date: str, end_date: str, pbar) -> int:
+        """
+        静默刷新一批股票的数据（删除旧数据，重新下载）
+
+        Args:
+            symbols: 股票代码列表
+            start_date: 开始日期
+            end_date: 结束日期
+            pbar: 外部进度条对象
+
+        Returns:
+            成功刷新的股票数量
+        """
+        success_count = 0
+
+        for symbol in symbols:
+            pbar.set_description(f"刷新 {symbol}")
+
+            try:
+                # 先删除旧数据
+                self.storage.delete_stock_data(symbol)
+                
+                # 获取历史数据
+                data = self.fetcher.get_historical_data(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+
+                if not data.empty:
+                    # 保存数据
+                    if self.storage.save_stock_data(symbol, data):
+                        success_count += 1
+                    else:
+                        logger.warning(f"保存{symbol}数据失败")
+                else:
+                    logger.warning(f"股票{symbol}没有数据")
+
+            except Exception as e:
+                logger.error(f"刷新股票{symbol}数据时出错: {e}")
+
+            # 更新进度条
+            pbar.update(1)
+
+        return success_count
 
     def update_recent_data(self) -> bool:
         """
-        更新最近的数据到最新的交易日
-        自动计算需要更新的日期范围
+        更新最近的数据到最新的交易日（增量更新，已弃用）
+        
+        注意：由于前复权数据的特性，增量更新会导致数据不连续。
+        请使用 full_refresh_data() 方法进行全量更新。
 
         Returns:
             是否更新成功
         """
-        end_date = datetime.now().strftime('%Y-%m-%d')
+        logger.warning("增量更新已弃用，请使用 full_refresh_data() 进行全量更新")
+        logger.warning("将自动调用 full_refresh_data() 方法")
+        return self.full_refresh_data()
+    
+    def full_refresh_data(self) -> bool:
+        """
+        全量刷新数据：删除所有现有股票数据，重新下载全部历史数据
+        
+        这是为了解决前复权数据连续性问题：
+        - 前复权价格会随除权除息事件动态调整
+        - 增量更新会导致新旧数据使用不同的复权基准
+        - 全量更新确保所有数据使用统一的复权基准（当前时刻）
 
+        Returns:
+            是否更新成功
+        """
+        logger.info("="*60)
+        logger.info("开始全量刷新股票数据")
+        logger.info("="*60)
+        
+        # 从配置文件读取参数
+        start_date = config.get('data_fetcher.default_start_date', '2020-01-01')
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        batch_size = config.get('data_fetcher.batch_size', 50)
+        
+        logger.info(f"时间范围: {start_date} 到 {end_date}")
+        logger.info(f"批次大小: {batch_size}")
+        
         # 获取已存储的股票列表
         existing_symbols = self.storage.list_available_stocks()
         if not existing_symbols:
-            logger.warning("没有找到已存储的股票数据，请先运行初始下载")
+            logger.warning("没有找到已存储的股票数据，将下载所有股票")
+            return self.download_all_stocks_data()
+        
+        logger.info(f"找到{len(existing_symbols)}只已存储的股票")
+        
+        # 获取股票基本信息
+        stock_info_df = self.storage.load_stock_info()
+        if stock_info_df.empty:
+            logger.error("无法加载股票基本信息，请先运行初始下载")
             return False
-
-        logger.info(f"需要更新{len(existing_symbols)}只股票的数据到{end_date}")
-
-        # 计算需要更新的日期范围
-        # 找到所有股票中最新的数据日期
-        latest_date = None
-        for symbol in existing_symbols[:10]:  # 只检查前10只股票来确定更新起始日期
-            _, max_date = self.storage.get_stock_date_range(symbol)
-            if max_date:
-                if latest_date is None or max_date > latest_date:
-                    latest_date = max_date
-
-        if latest_date is None:
-            logger.error("无法确定最新数据日期")
-            return False
-
-        # 从最新日期的下一天开始更新
-        try:
-            start_date_obj = datetime.strptime(latest_date, '%Y-%m-%d') + timedelta(days=1)
-            start_date = start_date_obj.strftime('%Y-%m-%d')
-        except:
-            start_date = latest_date
-
-        # 如果开始日期已经是今天或之后，说明数据已经是最新的
-        if start_date >= end_date:
-            logger.info("数据已经是最新的，无需更新")
-            return True
-
-        logger.info(f"更新日期范围: {start_date} 到 {end_date}")
-        print("开始更新数据，如果等待时间较长可能是遇到了API访问限制...")
-
+        
+        # 构建股票列表（使用已有的symbol列表）
+        logger.info("准备删除旧数据并重新下载...")
+        print(f"即将删除{len(existing_symbols)}只股票的旧数据并重新下载")
+        print("开始全量更新，如果等待时间较长可能是遇到了API访问限制...")
+        
+        # 分批下载
+        total_batches = (len(existing_symbols) + batch_size - 1) // batch_size
         success_count = 0
-        with tqdm(existing_symbols, desc="更新进度", unit="股") as pbar:
-            for symbol in pbar:
-                pbar.set_description(f"更新 {symbol}")
-
-                try:
-                    # 获取缺失的数据
-                    data = self.fetcher.get_historical_data(
-                        symbol=symbol,
-                        start_date=start_date,
-                        end_date=end_date
-                    )
-
-                    if not data.empty:
-                        # 追加数据
-                        if self.storage.append_stock_data(symbol, data):
-                            success_count += 1
-
-                except Exception as e:
-                    logger.error(f"更新股票{symbol}数据时出错: {e}")
-                    continue
-
+        failed_stocks = []
+        
+        # 使用整体进度条
+        with tqdm(total=len(existing_symbols), desc="全量更新进度", unit="股") as pbar:
+            for batch_idx in range(total_batches):
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, len(existing_symbols))
+                batch_symbols = existing_symbols[start_idx:end_idx]
+                
+                # 下载当前批次（先删除再下载）
+                batch_success = self._refresh_batch_silent(batch_symbols, start_date, end_date, pbar)
+                success_count += batch_success
+                failed_count = len(batch_symbols) - batch_success
+                
+                if failed_count > 0:
+                    failed_stocks.extend(batch_symbols[:failed_count])
+                
+                # 只在有失败时打印日志
+                if failed_count > 0:
+                    logger.warning(f"第{batch_idx + 1}批有{failed_count}只股票更新失败")
+        
         # 记录更新结果
         update_info = {
-            'action': 'update_recent',
+            'action': 'full_refresh',
             'start_date': start_date,
             'end_date': end_date,
             'total_stocks': len(existing_symbols),
             'success_count': success_count,
-            'failed_count': len(existing_symbols) - success_count
+            'failed_count': len(existing_symbols) - success_count,
+            'failed_stocks': failed_stocks[:10]  # 只记录前10个失败的
         }
         self.storage.save_update_log(update_info)
-
-        logger.info(f"数据更新完成！成功更新{success_count}只股票")
-
-        # 如果没有数据需要更新，也视为成功
-        if success_count == 0:
-            logger.info("所有股票数据都是最新的，无需更新")
-
-        return True  # 更新操作本身成功，即使没有新数据
+        
+        logger.info(f"全量更新完成！成功{success_count}只，失败{len(existing_symbols) - success_count}只")
+        
+        if failed_stocks:
+            logger.warning(f"失败的股票示例: {failed_stocks[:10]}")
+        
+        logger.info("="*60)
+        logger.info("全量刷新完成")
+        logger.info("="*60)
+        
+        return success_count > 0
 
     def get_download_status(self) -> dict:
         """
@@ -360,9 +423,13 @@ def main():
             print("配置为强制初始下载模式，开始下载所有股票数据...")
             success = downloader.download_all_stocks_data()
         elif mode == 'update':
-            # 强制更新模式
-            print("配置为强制更新模式，开始更新最近数据...")
-            success = downloader.update_recent_data()
+            # 强制全量更新模式
+            print("配置为强制全量更新模式，将删除旧数据并重新下载...")
+            success = downloader.full_refresh_data()
+        elif mode == 'refresh':
+            # 明确指定全量刷新
+            print("配置为全量刷新模式，将删除旧数据并重新下载...")
+            success = downloader.full_refresh_data()
         else:
             # 自动判断模式
             if status['total_stocks'] == 0:
@@ -370,9 +437,10 @@ def main():
                 print("检测到首次运行，开始下载所有股票数据...")
                 success = downloader.download_all_stocks_data()
             else:
-                # 更新数据
-                print("检测到已有数据，开始更新最近数据...")
-                success = downloader.update_recent_data()
+                # 全量更新数据（推荐）
+                print("检测到已有数据，开始全量更新（删除旧数据并重新下载）...")
+                print("注意：为保证前复权数据连续性，将重新下载全部历史数据")
+                success = downloader.full_refresh_data()
 
         if success:
             # 显示最终状态

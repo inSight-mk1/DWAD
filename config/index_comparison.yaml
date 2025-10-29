@@ -72,6 +72,30 @@ indices_to_compare:
   - pool_name: "大概念股池"
     concept_name: "中证汽车"
     display_name: "中证汽车"
+    
+  - pool_name: "大概念股池"
+    concept_name: "中证白酒"
+    display_name: "中证白酒"
+    
+  - pool_name: "大概念股池"
+    concept_name: "生猪产业"
+    display_name: "生猪产业"
+
+  - pool_name: "大概念股池"
+    concept_name: "调味品"
+    display_name: "调味品"
+  
+  - pool_name: "大概念股池"
+    concept_name: "存储"
+    display_name: "存储"
+
+  - pool_name: "大概念股池"
+    concept_name: "元器件"
+    display_name: "元器件"
+  
+  - pool_name: "大概念股池"
+    concept_name: "互联金融"
+    display_name: "互联金融"
 
 # 可视化配置
 visualization:

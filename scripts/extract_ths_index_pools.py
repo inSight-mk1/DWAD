@@ -6,6 +6,7 @@
 
 import os
 import sys
+import argparse
 from pathlib import Path
 import pandas as pd
 import yaml
@@ -194,27 +195,47 @@ def append_to_yaml(new_indices: dict, yaml_file: str, pool_category: str = "大�
 
 def main():
     """主函数"""
+    # --- Argument Parser ---
+    parser = argparse.ArgumentParser(description="从同花顺XLS文件中提取股池数据并追加到YAML配置文件。")
+    parser.add_argument(
+        "--xls_dir",
+        type=str,
+        help="包含同花顺XLS文件的目录路径。如果未提供，将使用脚本内指定的默认路径。"
+    )
+    parser.add_argument(
+        "--output_file",
+        type=str,
+        default=str(project_root / "config" / "stock_pools.yaml"),
+        help="输出的YAML配置文件路径。"
+    )
+    args = parser.parse_args()
+
     # 配置日志
     logger.remove()
     logger.add(sys.stderr, level="INFO", format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>")
-    
-    # 设置路径
-    xls_dir = project_root / "pool_xls" / "ths"
-    output_file = project_root / "config" / "stock_pools.yaml"
-    
+
+    # 确定XLS目录
+    if args.xls_dir:
+        xls_dir = Path(args.xls_dir)
+    else:
+        # 如果用户没有指定目录，则使用默认目录
+        xls_dir = project_root / "pool_xls" / "ths"
+
+    output_file = Path(args.output_file)
+
     logger.info("开始提取同花顺板块指数股池数据...")
     logger.info(f"XLS文件目录: {xls_dir}")
     logger.info(f"输出文件: {output_file}")
-    
+
     # 提取指数数据
     indices_data = extract_all_ths_indices(str(xls_dir))
-    
+
     if not indices_data:
         logger.error("没有提取到任何指数数据")
         return
-    
+
     logger.info(f"成功提取 {len(indices_data)} 个板块")
-    
+
     # 追加到YAML文件
     append_to_yaml(indices_data, str(output_file))
     

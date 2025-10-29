@@ -20,13 +20,41 @@ pip install -r requirements.txt
 
 ### 2. 运行提取脚本
 
+#### 覆盖模式（默认）
+
+从指定目录提取指数，生成独立的配置文件：
+
 ```bash
-python scripts/extract_csi_index_pools.py
+python scripts/extract_csi_index_pools.py --source zzzs
+```
+
+- 默认从 `pool_xls/zzzs` 目录读取
+- 输出到 `config/stock_pools_csi_indices.yaml`
+- 会覆盖已存在的同名文件
+
+#### 追加模式
+
+将新指数追加到现有股池配置文件：
+
+```bash
+python scripts/extract_csi_index_pools.py --source zzzs_25102001 --append
+```
+
+- `--source`: 指定数据源目录名（位于 `pool_xls/` 下）
+- `--append`: 启用追加模式，将数据追加到 `config/stock_pools.yaml`
+- 如果指数已存在会更新成分券，不存在则新增
+- 适合定期添加新指数到现有配置
+
+#### 使用 conda 环境
+
+```bash
+conda run -n dwad python scripts/extract_csi_index_pools.py --source zzzs_25102001 --append
 ```
 
 ### 3. 输出文件
 
-脚本会生成 `config/stock_pools_csi_indices.yaml` 文件，包含所有中证指数及其成分券。
+- **覆盖模式**: 生成 `config/stock_pools_csi_indices.yaml`
+- **追加模式**: 更新 `config/stock_pools.yaml`
 
 ## 数据格式
 
@@ -55,8 +83,12 @@ stock_pools:
 
 1. **自动提取**: 自动读取目录中所有 XLS/XLSX 文件
 2. **去重处理**: 自动去除重复的成分券名称
-3. **日志记录**: 提供详细的处理日志和统计信息
-4. **错误处理**: 对缺少必需列的文件会给出明确提示
+3. **双模式支持**: 
+   - 覆盖模式：生成独立配置文件
+   - 追加模式：更新现有配置文件
+4. **智能更新**: 追加模式下，已存在的指数会更新成分券，新指数会被添加
+5. **日志记录**: 提供详细的处理日志和统计信息
+6. **错误处理**: 对缺少必需列的文件会给出明确提示
 
 ## 扩展性
 
@@ -66,6 +98,33 @@ stock_pools:
 
 ## 注意事项
 
-1. 确保 `pool_xls/zzzs` 目录存在且包含 XLS 文件
-2. XLS 文件必须包含 "Index Name" 和 "Constituent Name" 列
-3. 生成的 YAML 文件会覆盖已存在的同名文件
+1. 确保指定的数据源目录存在且包含 XLS 文件（如 `pool_xls/zzzs`、`pool_xls/zzzs_25102001` 等）
+2. XLS 文件必须包含 "指数名称 Index Name" 和 "成份券名称Constituent Name" 列
+3. **覆盖模式**: 生成的 YAML 文件会覆盖已存在的同名文件
+4. **追加模式**: 需要确保 `config/stock_pools.yaml` 文件已存在
+5. 追加模式会自动处理重复指数，更新其成分券列表
+
+## 常见使用场景
+
+### 场景1: 首次提取所有指数
+
+```bash
+python scripts/extract_csi_index_pools.py --source zzzs
+```
+
+### 场景2: 添加新指数到现有配置
+
+当你在 `pool_xls` 下新建了目录（如 `zzzs_25102001`）并放入新的指数 XLS 文件：
+
+```bash
+# 追加到现有配置
+conda run -n dwad python scripts/extract_csi_index_pools.py --source zzzs_25102001 --append
+```
+
+### 场景3: 更新指数成分券
+
+如果某个指数的成分券发生变化，使用追加模式会自动更新：
+
+```bash
+conda run -n dwad python scripts/extract_csi_index_pools.py --source zzzs --append
+```

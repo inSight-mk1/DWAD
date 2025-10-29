@@ -131,9 +131,38 @@ class ParquetStorage:
         max_date = data['date'].max()
         return min_date, max_date
 
+    def delete_stock_data(self, symbol: str) -> bool:
+        """
+        删除股票历史数据文件
+
+        Args:
+            symbol: 股票代码
+
+        Returns:
+            是否删除成功
+        """
+        try:
+            file_path = self._get_stock_file_path(symbol)
+
+            if not file_path.exists():
+                logger.debug(f"股票{symbol}的数据文件不存在，无需删除")
+                return True
+
+            # 删除文件
+            file_path.unlink()
+            logger.debug(f"成功删除股票{symbol}的数据文件")
+            return True
+
+        except Exception as e:
+            logger.error(f"删除股票{symbol}数据失败: {e}")
+            return False
+
     def append_stock_data(self, symbol: str, new_data: pd.DataFrame) -> bool:
         """
-        追加股票数据（用于增量更新）
+        追加股票数据（用于增量更新，已不推荐）
+        
+        注意：由于前复权数据的特性，不建议使用增量更新。
+        推荐使用全量更新（先删除再重新下载）以确保数据连续性。
 
         Args:
             symbol: 股票代码

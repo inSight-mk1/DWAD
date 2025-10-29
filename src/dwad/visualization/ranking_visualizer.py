@@ -6,6 +6,7 @@
 
 from pathlib import Path
 from typing import Dict, Optional
+from datetime import datetime
 from loguru import logger
 import json
 
@@ -99,9 +100,18 @@ class RankingVisualizer:
             series_dates = series['dates'][1:] if len(series['dates']) > 1 else series['dates']
             ranks = series['ranks'][1:] if len(series['ranks']) > 1 else series['ranks']
             changes = series['changes'][1:] if len(series['changes']) > 1 else series['changes']
+            index_values = series['index_values'][1:] if len(series['index_values']) > 1 else series['index_values']
+            base_values = series['base_values'][1:] if len(series['base_values']) > 1 else series['base_values']
+            base_dates = series['base_dates'][1:] if len(series['base_dates']) > 1 else series['base_dates']
             
             # 使用交易日索引作为x轴（从0开始）
             x_values = list(range(len(ranks)))
+            
+            # 准备customdata: [日期, 涨跌幅, 当前指数值, 基准日期, 基准指数值]
+            period = len(series['dates']) - 1  # 计算周期长度
+            customdata = []
+            for date, change, idx_val, base_date, base_val in zip(series_dates, changes, index_values, base_dates, base_values):
+                customdata.append([date, change, idx_val, base_date, base_val])
             
             trace = {
                 'x': x_values,
@@ -114,11 +124,12 @@ class RankingVisualizer:
                     'color': color
                 },
                 'legendgroup': series['name'],  # 与实时数据同组
-                'customdata': [[date, change] for date, change in zip(series_dates, changes)],  # 添加日期和涨跌幅数据
+                'customdata': customdata,
                 'hovertemplate': f"<b>{series['name']}</b><br>" +
-                                "日期: %{customdata[0]}<br>" +
+                                "%{customdata[0]}: %{customdata[2]:.2f}<br>" +
+                                "%{customdata[3]}: %{customdata[4]:.2f}<br>" +
                                 "排名: %{y}<br>" +
-                                "涨跌幅: %{customdata[1]:.2f}%<br>" +
+                                f"近{period}日涨跌幅: %{{customdata[1]:.2f}}%<br>" +
                                 "<extra></extra>"
             }
             traces.append(trace)
@@ -143,9 +154,19 @@ class RankingVisualizer:
                         last_x = len(series['ranks'][1:]) - 1 if len(series['ranks']) > 1 else 0
                         last_rank = series['ranks'][-1]
                         
+                        # 计算周期长度
+                        period = len(series['dates']) - 1
+                        
                         # 实时排名
                         realtime_rank = realtime_rankings[name]['rank']
                         realtime_change = realtime_rankings[name]['change_pct']
+                        realtime_index = realtime_rankings[name]['index_value']
+                        base_value = realtime_rankings[name]['base_value']
+                        base_date = realtime_rankings[name]['base_date']
+                        period_base_value = realtime_rankings[name].get('period_base_value')
+                        period_base_date = realtime_rankings[name].get('period_base_date')
+                        period_base_label = period_base_date if period_base_date else (f"T-{period}" if period else "T-20")
+                        period_base_value_str = f"{period_base_value:.2f}" if period_base_value is not None else "--"
                         
                         # 创建细直线trace（从最后历史点到实时点）
                         realtime_trace = {
@@ -167,6 +188,20 @@ class RankingVisualizer:
                         traces.append(realtime_trace)
                         
                         # 添加实时数据点标记
+                        # 将realtime_timestamp转换为日期字符串（只显示日期，不显示时分秒）
+                        if realtime_timestamp:
+                            # 如果是datetime对象，转换为日期字符串
+                            try:
+                                if isinstance(realtime_timestamp, datetime):
+                                    timestamp_str = realtime_timestamp.strftime('%Y-%m-%d')
+                                else:
+                                    # 如果是字符串，尝试解析并格式化
+                                    dt = datetime.fromisoformat(str(realtime_timestamp).replace('+08:00', ''))
+                                    timestamp_str = dt.strftime('%Y-%m-%d')
+                            except:
+                                timestamp_str = '实时'
+                        else:
+                            timestamp_str = '实时'
                         marker_trace = {
                             'x': [last_x + 1],
                             'y': [realtime_rank],
@@ -174,19 +209,31 @@ class RankingVisualizer:
                             'type': 'scatter',
                             'mode': 'markers',
                             'marker': {
-                                'size': 10,  # 稍微增大标记点
+                                'size': 10,
                                 'color': color,
                                 'symbol': 'circle',
                                 'line': {
-                                    'width': 2,  # 添加白色边框，让重叠点更易区分
+                                    'width': 2,
                                     'color': 'white'
                                 }
                             },
                             'showlegend': False,
                             'legendgroup': name,  # 与历史和实时线同组
+                            'customdata': [[
+                                timestamp_str,
+                                realtime_change,
+                                realtime_index,
+                                base_date,
+                                base_value,
+                                period_base_label,
+                                period_base_value_str
+                            ]],
                             'hovertemplate': f"<b>{name} (实时)</b><br>" +
-                                            "实时排名: %{y}<br>" +
-                                            "实时涨跌幅: " + f"{realtime_change:.2f}%<br>" +
+                                            "%{customdata[0]}: %{customdata[2]:.2f}<br>" +
+                                            "%{customdata[3]}: %{customdata[4]:.2f}<br>" +
+                                            "%{customdata[5]}: %{customdata[6]}<br>" +
+                                            "排名: %{y}<br>" +
+                                            f"近{period}日涨跌幅: %{{customdata[1]:.2f}}%<br>" +
                                             "<extra></extra>"
                         }
                         traces.append(marker_trace)
@@ -269,9 +316,20 @@ class RankingVisualizer:
                 series_dates = series['dates'][1:] if len(series['dates']) > 1 else series['dates']
                 ranks = series['ranks'][1:] if len(series['ranks']) > 1 else series['ranks']
                 changes = series['changes'][1:] if len(series['changes']) > 1 else series['changes']
+                index_values = series['index_values'][1:] if len(series['index_values']) > 1 else series['index_values']
+                base_values = series['base_values'][1:] if len(series['base_values']) > 1 else series['base_values']
+                base_dates = series['base_dates'][1:] if len(series['base_dates']) > 1 else series['base_dates']
+                
+                # 获取周期信息（用于计算基准日期的指数值）
+                period = series.get('period', len(series['dates']))
                 
                 # 使用交易日索引作为x轴（从0开始）
                 x_values = list(range(len(ranks)))
+                
+                # 准备customdata: [日期, 涨跌幅, 当前指数值, 基准日期, 基准指数值]
+                customdata = []
+                for date, change, idx_val, base_date, base_val in zip(series_dates, changes, index_values, base_dates, base_values):
+                    customdata.append([date, change, idx_val, base_date, base_val])
                 
                 trace = {
                     'x': x_values,
@@ -284,11 +342,12 @@ class RankingVisualizer:
                         'color': color
                     },
                     'legendgroup': series['name'],  # 与实时数据同组
-                    'customdata': [[date, change] for date, change in zip(series_dates, changes)],  # 添加日期和涨跌幅数据
+                    'customdata': customdata,
                     'hovertemplate': f"<b>{series['name']}</b><br>" +
-                                    "日期: %{customdata[0]}<br>" +
+                                    "%{customdata[0]}: %{customdata[2]:.2f}<br>" +
+                                    "%{customdata[3]}: %{customdata[4]:.2f}<br>" +
                                     "排名: %{y}<br>" +
-                                    "涨跌幅: %{customdata[1]:.2f}%<br>" +
+                                    f"近{period}日涨跌幅: %{{customdata[1]:.2f}}%<br>" +
                                     "<extra></extra>"
                 }
                 traces.append(trace)
@@ -315,6 +374,13 @@ class RankingVisualizer:
                             # 实时排名
                             realtime_rank = realtime_rankings[name]['rank']
                             realtime_change = realtime_rankings[name]['change_pct']
+                            realtime_index = realtime_rankings[name]['index_value']
+                            base_value = realtime_rankings[name]['base_value']
+                            base_date = realtime_rankings[name]['base_date']
+                            period_base_value = realtime_rankings[name].get('period_base_value')
+                            period_base_date = realtime_rankings[name].get('period_base_date')
+                            period_base_label = period_base_date if period_base_date else (f"T-{period_data['period']}" if period_data.get('period') else "T-20")
+                            period_base_value_str = f"{period_base_value:.2f}" if period_base_value is not None else "--"
                             
                             # 创建细直线trace（从最后历史点到实时点）
                             realtime_trace = {
@@ -336,6 +402,20 @@ class RankingVisualizer:
                             traces.append(realtime_trace)
                             
                             # 添加实时数据点标记
+                            # 将realtime_timestamp转换为日期字符串（只显示日期，不显示时分秒）
+                            if realtime_timestamp:
+                                # 如果是datetime对象，转换为日期字符串
+                                try:
+                                    if isinstance(realtime_timestamp, datetime):
+                                        timestamp_str = realtime_timestamp.strftime('%Y-%m-%d')
+                                    else:
+                                        # 如果是字符串，尝试解析并格式化
+                                        dt = datetime.fromisoformat(str(realtime_timestamp).replace('+08:00', ''))
+                                        timestamp_str = dt.strftime('%Y-%m-%d')
+                                except:
+                                    timestamp_str = '实时'
+                            else:
+                                timestamp_str = '实时'
                             marker_trace = {
                                 'x': [last_x + 1],
                                 'y': [realtime_rank],
@@ -349,9 +429,21 @@ class RankingVisualizer:
                                 },
                                 'showlegend': False,
                                 'legendgroup': name,  # 与历史和实时线同组
+                                'customdata': [[
+                                    timestamp_str,
+                                    realtime_change,
+                                    realtime_index,
+                                    base_date,
+                                    base_value,
+                                    period_base_label,
+                                    period_base_value_str
+                                ]],
                                 'hovertemplate': f"<b>{name} (实时)</b><br>" +
-                                                "实时排名: %{y}<br>" +
-                                                "实时涨跌幅: " + f"{realtime_change:.2f}%<br>" +
+                                                "%{customdata[0]}: %{customdata[2]:.2f}<br>" +
+                                                "%{customdata[3]}: %{customdata[4]:.2f}<br>" +
+                                                "%{customdata[5]}: %{customdata[6]}<br>" +
+                                                "排名: %{y}<br>" +
+                                                f"近{period}日涨跌幅: %{{customdata[1]:.2f}}%<br>" +
                                                 "<extra></extra>"
                             }
                             traces.append(marker_trace)
@@ -1120,19 +1212,36 @@ class RankingVisualizer:
                     // 添加点击事件：点击线条时加粗并显示数据点
                     const chartElement = document.getElementById(chartId);
                     const clickedTraces = new Set();  // 记录哪些线被点击了
+                    const realtimeTraceMap = new Map();  // 记录历史trace与实时trace的对应关系
+
+                    traces.forEach((trace, index) => {{
+                        if (trace.is_realtime) {{
+                            const group = trace.legendgroup;
+                            if (group) {{
+                                if (!realtimeTraceMap.has(group)) {{
+                                    realtimeTraceMap.set(group, []);
+                                }}
+                                realtimeTraceMap.get(group).push(index);
+                            }}
+                        }}
+                    }});
                     
                     chartElement.on('plotly_click', function(data) {{
                         const pointData = data.points[0];
                         const traceIndex = pointData.curveNumber;
                         
                         // 切换该线的状态
+                        const traceName = traces[traceIndex] ? traces[traceIndex].legendgroup || traces[traceIndex].name : null;
+                        const relatedRealtime = traceName && realtimeTraceMap.has(traceName) ? realtimeTraceMap.get(traceName) : [];
+                        const indicesToUpdate = [traceIndex, ...relatedRealtime];
+
                         if (clickedTraces.has(traceIndex)) {{
                             // 已被点击过，恢复原状
                             clickedTraces.delete(traceIndex);
                             Plotly.restyle(chartId, {{
                                 'mode': 'lines',
                                 'line.width': {line_width}
-                            }}, [traceIndex]);
+                            }}, indicesToUpdate);
                         }} else {{
                             // 未被点击，加粗并显示数据点
                             clickedTraces.add(traceIndex);
@@ -1140,7 +1249,7 @@ class RankingVisualizer:
                                 'mode': 'lines+markers',
                                 'line.width': {line_width * 2},
                                 'marker.size': 6
-                            }}, [traceIndex]);
+                            }}, indicesToUpdate);
                         }}
                     }});
                     
