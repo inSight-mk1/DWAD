@@ -34,16 +34,16 @@ indices_to_compare:
     display_name: "消费电子"
     
   - pool_name: "大概念股池"
-    concept_name: "电网设备主题"
-    display_name: "电网设备"
+    concept_name: "500电力设备"
+    display_name: "500电力设备"
     
   - pool_name: "大概念股池"
     concept_name: "科创芯片"
     display_name: "科创芯片"
     
   - pool_name: "大概念股池"
-    concept_name: "软件开发"
-    display_name: "软件开发"
+    concept_name: "AI广告"
+    display_name: "AI广告"
     
   - pool_name: "大概念股池"
     concept_name: "CSSW证券"
@@ -56,22 +56,14 @@ indices_to_compare:
   - pool_name: "大概念股池"
     concept_name: "中证煤炭"
     display_name: "中证煤炭"
+     
+  # - pool_name: "大概念股池"
+  #   concept_name: "轨交设备"
+  #   display_name: "轨交设备"
     
   - pool_name: "大概念股池"
-    concept_name: "低空经济"
-    display_name: "低空经济"
-    
-  - pool_name: "大概念股池"
-    concept_name: "固态电池"
-    display_name: "固态电池"
-    
-  - pool_name: "大概念股池"
-    concept_name: "轨交设备"
-    display_name: "轨交设备"
-    
-  - pool_name: "大概念股池"
-    concept_name: "中证汽车"
-    display_name: "中证汽车"
+    concept_name: "汽车主机厂"
+    display_name: "汽车主机厂"
     
   - pool_name: "大概念股池"
     concept_name: "中证白酒"
@@ -94,8 +86,49 @@ indices_to_compare:
     display_name: "元器件"
   
   - pool_name: "大概念股池"
+    concept_name: "游戏"
+    display_name: "游戏"
+  
+  - pool_name: "大概念股池"
     concept_name: "互联金融"
     display_name: "互联金融"
+
+  - pool_name: "大概念股池"
+    concept_name: "光伏产业"
+    display_name: "光伏产业"
+
+  - pool_name: "大概念股池"
+    concept_name: "化肥农药"
+    display_name: "化肥农药"
+  
+  - pool_name: "大概念股池"
+    concept_name: "中证中药"
+    display_name: "中证中药"
+
+  - pool_name: "大概念股池"
+    concept_name: "央企红利"
+    display_name: "央企红利"
+
+  - pool_name: "大概念股池"
+    concept_name: "微盘股"
+    display_name: "微盘股"
+  
+  - pool_name: "大概念股池"
+    concept_name: "800地产"
+    display_name: "800地产"
+
+  - pool_name: "大概念股池"
+    concept_name: "央企红利"
+    display_name: "央企红利"
+  
+  - pool_name: "大概念股池"
+    concept_name: "固电设备"
+    display_name: "固电设备"
+  
+  - pool_name: "大概念股池"
+    concept_name: "固电材料"
+    display_name: "固电材料"
+
 
 # 可视化配置
 visualization:

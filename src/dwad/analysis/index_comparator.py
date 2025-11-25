@@ -456,7 +456,7 @@ class IndexComparator:
                 change_pct = ranking_df.loc[latest_date, f'{display_name}_pct']
                 logger.info(f"  {int(rank)}. {display_name}: {change_pct:+.2f}%")
     
-    def get_ranking_data_for_visualization(self, periods: list = None, include_realtime: bool = None) -> Dict[str, any]:
+    def get_ranking_data_for_visualization(self, periods: list = None, include_realtime: bool = None, clear_realtime_cache: bool = True) -> Dict[str, any]:
         """
         获取用于可视化的排名数据（支持多周期）
         
@@ -610,7 +610,8 @@ class IndexComparator:
         }
         
         # 清空缓存，避免下次调用使用过期数据
-        self.realtime_prices_cache = {}
+        if clear_realtime_cache:
+            self.realtime_prices_cache = {}
         
         return result
     
@@ -909,13 +910,13 @@ class IndexComparator:
                         if yesterday_price > 0:
                             change = ((current_price / yesterday_price) - 1) * 100
                             today_changes.append(change)
-                
+
                 if today_changes:
-                    # 今日平均涨跌幅
+                    # 今日平均涨跌幅（当日实时涨幅，后续在前端显示用）
                     avg_today_change = sum(today_changes) / len(today_changes)
                     # 实时指数值 = 昨日指数值 × (1 + 今日涨跌幅)
                     realtime_index_value = last_index_value * (1 + avg_today_change / 100)
-                    
+
                     # 计算用于排名的涨跌幅
                     if period is not None and period_base_index_value is not None:
                         # 如果指定了period，排名涨跌幅 = (实时指数 / period天前指数 - 1) × 100
@@ -925,11 +926,13 @@ class IndexComparator:
                         # 如果没有指定period，排名涨跌幅就是今日涨跌幅
                         ranking_change_pct = avg_today_change
                         logger.debug(f"[{display_name}] 实时指数={realtime_index_value:.2f}, 今日涨跌={avg_today_change:+.2f}%")
-                    
+
+                    # 保存实时数据：包括用于排名的周期涨跌幅和当日实时涨幅
                     realtime_data[display_name] = {
                         'index_value': realtime_index_value,
-                        'change_pct': ranking_change_pct,  # 用于排名的涨跌幅
-                        'base_value': last_index_value,  # 昨日指数值
+                        'change_pct': ranking_change_pct,      # 用于排名的涨跌幅（可能是周期）
+                        'today_change_pct': avg_today_change,   # 当日实时涨幅
+                        'base_value': last_index_value,         # 昨日指数值
                         'base_date': last_date.strftime('%Y-%m-%d'),
                         'period_base_value': period_base_index_value if period_base_index_value is not None else None,
                         'period_base_date': period_base_date.strftime('%Y-%m-%d') if period_base_date is not None else None
@@ -979,6 +982,7 @@ class IndexComparator:
             realtime_rankings[name] = {
                 'rank': rank,
                 'change_pct': change,
+                'today_change_pct': realtime_data[name].get('today_change_pct'),
                 'index_value': realtime_data[name]['index_value'],
                 'base_value': realtime_data[name]['base_value'],
                 'base_date': realtime_data[name]['base_date'],

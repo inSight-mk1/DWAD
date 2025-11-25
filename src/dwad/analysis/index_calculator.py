@@ -253,7 +253,7 @@ class IndexCalculator:
         """计算所有股池的指数"""
         if not self.stock_pools:
             logger.warning("股池配置为空，无法计算指数")
-            return
+            return False
 
         total_count = sum(len(concepts) for concepts in self.stock_pools.values())
         current = 0
@@ -288,15 +288,22 @@ class IndexCalculator:
                     logger.warning(f"  ✗ 指数计算失败")
         
         logger.info(f"指数计算完成！成功: {success_count}/{total_count}")
+        return success_count > 0
 
     def run(self):
         """执行所有计算任务"""
         logger.info("开始计算股池指数...")
-        self.calculate_all_indices()
+        success = self.calculate_all_indices()
         logger.info("所有指数计算完成！")
+        return bool(success)
 
 
 def main():
     """主函数"""
     calculator = IndexCalculator()
-    calculator.run()
+    try:
+        success = calculator.run()
+        return bool(success)
+    except Exception as e:
+        logger.error(f"指数计算过程中发生异常: {e}")
+        return False

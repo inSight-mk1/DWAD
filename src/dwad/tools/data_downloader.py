@@ -458,12 +458,15 @@ def main():
                 if latest_update.get('failed_stocks'):
                     print(f"失败示例: {latest_update['failed_stocks'][:3]}")
 
+        return bool(success)
+
     except Exception as e:
         logger.error(f"程序执行出错: {e}")
         print(f"错误: {e}")
         import traceback
         logger.error(f"详细错误信息: {traceback.format_exc()}")
         print("请查看日志文件获取详细错误信息")
+        return False
 
 
 if __name__ == '__main__':
