@@ -1,0 +1,67 @@
+# DWAD系统配置文件示例
+# 使用说明：复制此文件为 config.yaml 并填入您的实际配置
+
+# 掘金API配置
+goldminer:
+  token: "YOUR_GOLDMINER_TOKEN_HERE"  # 在此填入您的掘金API token
+  strategy_id: ""  # 策略ID（可选）
+
+# 数据存储配置
+data_storage:
+  base_path: "./data"
+  stocks_path: "./data/stocks"
+  indices_path: "./data/indices"
+  metadata_path: "./data/metadata"
+
+# 股池配置
+stock_pools:
+  config_file: "./config/stock_pools.yaml"
+
+# 数据获取配置
+data_fetcher:
+  # 运行模式: "auto" - 自动判断, "initial" - 强制初始下载, "update" - 强制更新模式
+  mode: "update"
+
+  # 历史数据获取的默认起始日期
+  default_start_date: "2024-09-18"
+
+  # 批次大小，每批处理多少只股票
+  batch_size: 1
+
+  # 是否启用断点续传
+  resume_download: true
+
+  # 数据字段配置
+  market_data_fields:
+    - "open"      # 开盘价
+    - "high"      # 最高价
+    - "low"       # 最低价
+    - "close"     # 收盘价
+    - "volume"    # 成交量
+    - "turnover"  # 成交额
+    - "eob"
+
+# 指数计算配置
+index_calculator:
+  # 指数基准值
+  base_value: 1000.0
+  
+  # 指数起始日期（格式: YYYY-MM-DD）
+  # 说明：
+  #   - 如果设置了起始日期，指数将从该日期开始计算
+  #   - 上市日期晚于起始日的股票将被排除，不参与指数计算
+  #   - 如果不设置（null），则使用所有成分股中最早的交易日作为起始日
+  start_date: "2024-09-18"  # 例如: "2020-01-01"或null
+
+  # 指数计算方法
+  methods:
+    - "market_cap_weighted"  # 市值加权
+    - "price_average"        # 平均股价
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level} | {module}:{function}:{line} | {message}"
+  file_path: "./logs/dwad.log"
+  rotation: "10 MB"
+  retention: "30 days"
