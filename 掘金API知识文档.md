@@ -148,7 +148,74 @@ backtest_slippage_ratio   # 滑点率
 ...
 ```
 
-### 11. 依赖包
+### 11. 远程终端连接 (Linux环境)
+
+掘金终端仅支持 Windows 系统，但可以通过远程连接方式在 Linux 环境中使用掘金 API。
+
+#### 11.1 架构说明
+```
+┌─────────────────┐         ┌─────────────────┐
+│  Linux 服务器    │  网络   │  Windows 终端    │
+│  (运行Python)   │ ──────> │  (掘金终端)      │
+│  set_serv_addr  │         │  监听端口        │
+└─────────────────┘         └─────────────────┘
+```
+
+#### 11.2 核心函数：set_serv_addr
+```python
+from gm.api import set_token, set_serv_addr
+
+# 设置远程终端地址（必须在 set_token 之前调用）
+set_serv_addr("192.168.1.100:7001")  # Windows终端的IP和端口
+
+# 然后设置token
+set_token("your_token_here")
+```
+
+#### 11.3 配置文件方式
+在 `config/config.yaml` 中配置：
+```yaml
+goldminer:
+  token: "YOUR_TOKEN"
+  serv_addr: "192.168.1.100:7001"  # Windows终端地址
+```
+
+#### 11.4 代码实现示例
+```python
+from gm.api import set_token, set_serv_addr, get_symbols
+
+def init_goldminer(token: str, serv_addr: str = None):
+    """初始化掘金API，支持远程终端连接"""
+    # Linux环境需要先设置终端地址
+    if serv_addr:
+        set_serv_addr(serv_addr)
+        print(f"掘金终端地址设置为: {serv_addr}")
+    
+    # 设置token
+    set_token(token)
+    
+    # 验证连接
+    try:
+        symbols = get_symbols(sec_type1=1010, df=True)
+        print(f"连接成功，获取到 {len(symbols)} 只股票")
+        return True
+    except Exception as e:
+        print(f"连接失败: {e}")
+        return False
+```
+
+#### 11.5 Windows 终端配置
+1. 在 Windows 上安装并启动掘金终端
+2. 确保终端监听端口（默认 7001）对外开放
+3. 配置防火墙允许 Linux 服务器访问该端口
+4. 确保 Windows 和 Linux 在同一网络或可互通
+
+#### 11.6 常见问题
+- **连接超时**: 检查防火墙设置和网络连通性
+- **认证失败**: 确认 token 正确且终端已登录
+- **调用顺序错误**: `set_serv_addr` 必须在 `set_token` 之前调用
+
+### 12. 依赖包
 需要安装掘金官方SDK：
 ```bash
 pip install gm3

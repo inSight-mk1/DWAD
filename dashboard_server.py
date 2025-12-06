@@ -7,7 +7,7 @@
 
 使用方法：
     python dashboard_server.py
-    然后在浏览器中打开 http://127.0.0.1:5000/
+    然后在浏览器中打开 http://127.0.0.1:8818/
 """
 
 from __future__ import annotations
@@ -626,10 +626,11 @@ def main() -> None:
     """脚本入口函数。
 
     默认监听 127.0.0.1:5000，关闭 debug 模式，避免在生产环境中自动重载。
+    
     """
     # 先初始化日志系统
     init_logger()
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=8818, debug=False)
 
 
 if __name__ == "__main__":

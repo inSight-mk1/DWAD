@@ -42,7 +42,13 @@ class RealtimePriceFetcher:
         """初始化掘金API"""
         try:
             # 导入掘金API
-            from gm.api import set_token
+            from gm.api import set_token, set_serv_addr
+
+            # 设置终端服务地址（Linux环境需要指向Windows终端）
+            serv_addr = config.get_goldminer_serv_addr()
+            if serv_addr:
+                set_serv_addr(serv_addr)
+                logger.info(f"掘金终端地址设置为: {serv_addr}（实时价格模块）")
 
             # 设置token
             set_token(self.token)

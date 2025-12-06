@@ -103,6 +103,10 @@ class ConfigManager:
             logger.warning("掘金API token未配置")
         return token
 
+    def get_goldminer_serv_addr(self) -> str:
+        """获取掘金终端服务地址（Linux环境需要指向Windows终端）"""
+        return self.get('goldminer.serv_addr', '')
+
     def get_data_paths(self) -> Dict[str, str]:
         """获取数据存储路径配置"""
         return {
