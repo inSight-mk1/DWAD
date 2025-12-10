@@ -42,6 +42,11 @@ class ConfigManager:
             logger.error(f"加载配置文件失败: {e}")
             self._config = {}
 
+    def reload(self) -> None:
+        """重新加载配置文件（用于运行时配置变更后刷新）"""
+        logger.info("重新加载配置文件...")
+        self._load_config()
+
     def get(self, key: str, default: Any = None) -> Any:
         """
         获取配置值，支持点号分隔的嵌套键

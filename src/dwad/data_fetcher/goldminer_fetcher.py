@@ -40,6 +40,9 @@ class GoldMinerFetcher:
         Args:
             token: 掘金API token，如果为None则从配置文件获取
         """
+        # 重新加载配置文件，确保获取最新配置
+        config.reload()
+        
         self.token = token or config.get_goldminer_token()
         if not self.token:
             raise ValueError("掘金API token未配置，请在config.yaml中设置goldminer.token")

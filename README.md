@@ -9,6 +9,8 @@ DWAD是一个基于掘金量化平台的股票投机分析决策系统，主要�
 - 批量下载A股历史行情数据
 - 股池管理和板块指数制作
 - 概念强弱分析和可视化
+- Web仪表盘实时排名展示
+- 多周期指数比较分析
 
 ## 快速开始
 
@@ -18,7 +20,7 @@ DWAD是一个基于掘金量化平台的股票投机分析决策系统，主要�
 
 ```bash
 pip install -r requirements.txt
-pip install gm3  # 掘金SDK
+pip install gm  # 掘金SDK
 ```
 
 ### 2. 配置设置
@@ -34,7 +36,11 @@ cp config/config.yaml.example config/config.yaml
 ```yaml
 goldminer:
   token: "your_goldminer_token_here"
+  serv_addr: "192.168.1.100:7001"  # Linux环境需配置Windows终端地址
 ```
+
+> **Linux环境说明**：掘金终端仅支持Windows，Linux环境需通过 `serv_addr` 连接远程Windows终端。
+> 详见 [掘金API知识文档](docs/掘金API知识文档.md)
 
 ### 3. 下载数据
 
@@ -148,23 +154,42 @@ data/
 ```
 DWAD/
 ├── src/dwad/                    # 源代码
-│   ├── data_fetcher/           # 数据获取模块
-│   ├── data_storage/           # 数据存储模块
+│   ├── data_fetcher/           # 数据获取模块 (含实时价格获取)
+│   ├── data_storage/           # 数据存储模块 (Parquet格式)
+│   ├── analysis/               # 分析模块 (指数计算、比较)
+│   ├── visualization/          # 可视化模块 (排名图表)
+│   ├── pool_manager/           # 股池管理模块
 │   ├── tools/                  # 工具模块
-│   └── utils/                  # 工具函数
+│   └── utils/                  # 工具函数 (配置、日志)
+├── scripts/                    # 脚本工具
+│   ├── download_data.py        # 数据下载
+│   ├── calculate_index.py      # 指数计算
+│   ├── compare_indices*.py     # 指数比较 (多周期/实时)
+│   └── extract_*_pools.py      # 股池提取 (中证/同花顺)
 ├── config/                     # 配置文件
+├── docs/                       # 文档
 ├── data/                       # 数据存储目录
 ├── logs/                       # 日志文件
-├── download_data.py            # 数据下载启动脚本
+├── dashboard_server.py         # Flask仪表盘服务 (端口8818)
+├── web_app.py                  # Streamlit Web应用
 └── requirements.txt            # 依赖包列表
 ```
 
+## 已完成功能
+
+- [x] 股池管理功能
+- [x] 指数计算引擎 (市值加权/平均股价)
+- [x] 概念强弱分析 (多周期排名)
+- [x] 可视化图表生成
+- [x] Web仪表盘 (Flask + Streamlit)
+- [x] 实时价格获取
+- [x] Linux远程终端支持
+
 ## 下一步开发
 
-- [ ] 股池管理功能
-- [ ] 指数计算引擎
-- [ ] 概念强弱分析
-- [ ] 可视化图表生成
+- [ ] 自动化定时任务
+- [ ] 更多分析指标
+- [ ] 移动端适配
 
 ## 许可证
 

@@ -22,6 +22,9 @@ class IndexCalculator:
         Args:
             stock_pools_config_path: 股池配置文件路径，如果为None则自动查找
         """
+        # 重新加载配置文件，确保获取最新配置
+        config.reload()
+        
         self.storage = ParquetStorage()
         self.stock_pools = self._load_stock_pools(stock_pools_config_path)
         self.stock_info_df = self.storage.load_stock_info()

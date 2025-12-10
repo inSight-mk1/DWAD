@@ -1271,7 +1271,8 @@ class RankingVisualizer:
         }}
 
         // 通用任务调用函数：调用 Flask 后端 API，并在按钮旁边展示执行进度
-        async function runTask(task) {{
+        // isAutoTriggered: 是否由自动触发（如下载后自动计算指数），不暂停倒计时
+        async function runTask(task, isAutoTriggered = false) {{
             let apiPath = '';
             let taskName = '';
 
@@ -1293,6 +1294,11 @@ class RankingVisualizer:
 
             const isUpdate = apiPath === '/api/update_ranking';
 
+            // 手动操作时暂停自动更新倒计时
+            if (!isAutoTriggered) {{
+                pauseAutoUpdate();
+            }}
+
             try {{
                 const resp = await fetch(apiPath, {{ method: 'POST' }});
                 const data = await resp.json().catch(() => ({{ ok: false, error: '响应解析失败' }}));
@@ -1300,6 +1306,7 @@ class RankingVisualizer:
                     const completedTime = formatTime();
                     if (task === 'download') {{
                         // 下载任务：再查询一次后台日志，获取成功/总数信息
+                        let downloadStatusMsg = taskName + '已完成：' + completedTime;
                         try {{
                             const sResp = await fetch('/api/download_status');
                             const sData = await sResp.json().catch(() => null);
@@ -1308,17 +1315,17 @@ class RankingVisualizer:
                                 const total = latest.total_stocks || latest.total || 0;
                                 const success = latest.success_count || 0;
                                 if (total > 0) {{
-                                    setTaskStatus(taskName + '已完成(' + success + '/' + total + ')：' + completedTime);
-                                }} else {{
-                                    setTaskStatus(taskName + '已完成：' + completedTime);
+                                    downloadStatusMsg = taskName + '已完成(' + success + '/' + total + ')：' + completedTime;
                                 }}
-                            }} else {{
-                                setTaskStatus(taskName + '已完成：' + completedTime);
                             }}
                         }} catch (e) {{
                             console.error('获取下载状态失败', e);
-                            setTaskStatus(taskName + '已完成：' + completedTime);
                         }}
+                        setTaskStatus(downloadStatusMsg);
+                        // 下载完成后自动计算指数
+                        setTaskStatus(downloadStatusMsg + '，正在自动计算指数...');
+                        await runTask('calculate', true);  // 自动触发，不再暂停倒计时
+                        return;  // 计算指数完成后会恢复倒计时
                     }} else if (task === 'calculate') {{
                         setTaskStatus(taskName + '已完成：' + completedTime);
                     }} else if (isUpdate) {{
@@ -1337,6 +1344,11 @@ class RankingVisualizer:
             }} catch (err) {{
                 setTaskStatus(taskName + '调用接口出错，请稍后重试');
                 console.error('调用 API 出错', apiPath, err);
+            }} finally {{
+                // 手动操作结束后恢复自动更新倒计时
+                if (!isAutoTriggered) {{
+                    resumeAutoUpdate();
+                }}
             }}
         }}
 
@@ -2237,6 +2249,8 @@ class RankingVisualizer:
         let autoUpdateTimerId = null;
         let autoUpdateCountdownTimerId = null;
         let nextAutoUpdateTime = null;
+        let autoUpdatePaused = false;  // 手动操作时暂停自动更新
+        let pausedRemainingMs = null;  // 暂停时保存的剩余毫秒数
 
         function saveAutoUpdateConfig(config) {{
             try {{
@@ -2275,6 +2289,48 @@ class RankingVisualizer:
             if (autoUpdateCountdownTimerId) {{
                 clearInterval(autoUpdateCountdownTimerId);
                 autoUpdateCountdownTimerId = null;
+            }}
+        }}
+
+        // 暂停自动更新倒计时（手动操作时调用）
+        function pauseAutoUpdate() {{
+            if (!nextAutoUpdateTime || autoUpdatePaused) return;
+            autoUpdatePaused = true;
+            const now = new Date();
+            pausedRemainingMs = Math.max(0, nextAutoUpdateTime.getTime() - now.getTime());
+            clearAutoUpdateTimers();
+            const el = document.getElementById('auto-update-countdown');
+            if (el && pausedRemainingMs > 0) {{
+                const totalSeconds = Math.floor(pausedRemainingMs / 1000);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                const mm = String(minutes).padStart(2, '0');
+                const ss = String(seconds).padStart(2, '0');
+                el.textContent = '自动更新已暂停 (' + mm + ':' + ss + ')';
+            }}
+        }}
+
+        // 恢复自动更新倒计时（手动操作结束后调用）
+        function resumeAutoUpdate() {{
+            if (!autoUpdatePaused) return;
+            autoUpdatePaused = false;
+            const toggle = document.getElementById('auto-update-toggle');
+            if (!toggle || !toggle.checked) {{
+                pausedRemainingMs = null;
+                return;
+            }}
+            if (pausedRemainingMs !== null && pausedRemainingMs > 0) {{
+                const now = new Date();
+                nextAutoUpdateTime = new Date(now.getTime() + pausedRemainingMs);
+                pausedRemainingMs = null;
+                updateAutoUpdateCountdown();
+                autoUpdateCountdownTimerId = setInterval(updateAutoUpdateCountdown, 1000);
+                autoUpdateTimerId = setTimeout(() => {{
+                    runTask('update');
+                }}, nextAutoUpdateTime.getTime() - now.getTime());
+            }} else {{
+                pausedRemainingMs = null;
+                scheduleNextAutoUpdate();
             }}
         }}
 
