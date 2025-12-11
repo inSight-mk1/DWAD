@@ -2,6 +2,9 @@ import yaml
 import os
 from pathlib import Path
 from typing import Dict, Any, Optional
+
+# 导入我们的 logger 模块以确保北京时间配置生效
+from . import logger as _logger_module  # noqa: F401
 from loguru import logger
 
 

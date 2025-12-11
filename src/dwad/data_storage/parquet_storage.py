@@ -7,6 +7,7 @@ import json
 from loguru import logger
 
 from ..utils.config import config
+from ..utils.timezone import now_beijing_iso
 from ..data_fetcher.goldminer_fetcher import StockInfo, MarketData
 
 
@@ -286,8 +287,8 @@ class ParquetStorage:
             else:
                 logs = []
 
-            # 添加时间戳
-            update_info['timestamp'] = datetime.now().isoformat()
+            # 添加时间戳（北京时间）
+            update_info['timestamp'] = now_beijing_iso()
 
             # 添加新日志
             logs.append(update_info)

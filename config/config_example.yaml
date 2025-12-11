@@ -66,3 +66,11 @@ logging:
   file_path: "./logs/dwad.log"
   rotation: "10 MB"
   retention: "30 days"
+
+stock_alerts:
+  nuxing_symbols: []
+  jindian_symbols: []
+  push:
+    check_interval_minutes: 5
+    push_interval_minutes: 10
+    max_push_times: 100

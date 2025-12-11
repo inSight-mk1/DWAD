@@ -18,6 +18,7 @@ from typing import Any, Dict, List
 
 import json
 import pandas as pd
+from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, Response, jsonify, request
 from loguru import logger
 
@@ -34,10 +35,26 @@ from dwad.tools.data_downloader import main as download_data_main
 from dwad.analysis.index_calculator import main as calculate_index_main
 from dwad.data_storage.parquet_storage import ParquetStorage
 from dwad.data_fetcher.realtime_price_fetcher import RealtimePriceFetcher
+from dwad.analysis.stock_alerts import StockAlertEngine
 from dwad.utils.logger import setup_logger
 
 
 app = Flask(__name__)
+
+
+# 个股预警相关全局对象
+_alert_engine: StockAlertEngine | None = None
+_scheduler: BackgroundScheduler | None = None
+_ALERT_DETECTION_JOB_ID = "stock_alert_detection"
+
+
+def get_alert_engine() -> StockAlertEngine:
+    """惰性初始化并返回全局个股预警引擎。"""
+
+    global _alert_engine
+    if _alert_engine is None:
+        _alert_engine = StockAlertEngine()
+    return _alert_engine
 
 
 def init_logger() -> None:
@@ -48,6 +65,66 @@ def init_logger() -> None:
     """
     setup_logger()
     logger.info("DWAD Flask 仪表盘服务启动")
+
+
+def init_stock_alert_scheduler() -> None:
+    """初始化个股预警定时任务。
+
+    根据配置中的 stock_alerts.push.check_interval_minutes 设置检测周期。
+    检测时间窗口：9:35 - 15:05（北京时间），其他时间不执行检测。
+    """
+
+    global _scheduler
+
+    engine = get_alert_engine()
+    cfg = engine.get_push_config()
+    interval = int(cfg.get("check_interval_minutes", 5) or 5)
+    if interval <= 0:
+        interval = 5
+
+    if _scheduler is None:
+        _scheduler = BackgroundScheduler()
+    else:
+        try:
+            _scheduler.remove_job(_ALERT_DETECTION_JOB_ID)
+        except Exception:
+            # 如果不存在旧任务，忽略错误
+            pass
+
+    def _job_wrapper() -> None:
+        """执行预警检测，仅在交易时间窗口内运行。"""
+        try:
+            from src.dwad.utils.timezone import now_beijing
+            now = now_beijing()
+            current_time = now.time()
+            
+            # 交易时间窗口：9:35 - 15:05（北京时间）
+            from datetime import time as dt_time
+            start_time = dt_time(9, 35)
+            end_time = dt_time(15, 5)
+            
+            if not (start_time <= current_time <= end_time):
+                logger.debug("当前时间 {} 不在预警检测窗口 (09:35-15:05)，跳过本次检测", 
+                           current_time.strftime("%H:%M:%S"))
+                return
+            
+            logger.info("执行定时预警检测 (当前北京时间: {})", now.strftime("%H:%M:%S"))
+            engine.run_detection_cycle()
+        except Exception:
+            logger.exception("执行个股预警检测任务失败")
+
+    _scheduler.add_job(
+        _job_wrapper,
+        "interval",
+        minutes=interval,
+        id=_ALERT_DETECTION_JOB_ID,
+        replace_existing=True,
+    )
+
+    if not _scheduler.running:
+        _scheduler.start()
+
+    logger.info("个股预警定时任务已启动/更新，检测间隔 = {} 分钟，时间窗口 = 09:35-15:05", interval)
 
 
 def _sector_snapshot_cache_path() -> Path:
@@ -622,6 +699,242 @@ def api_sector_stock_ranking():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+# ---------------------------------------------------------------------------
+# 个股预警相关 API
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/stock_alerts/config")
+def api_stock_alerts_config():  # type: ignore[override]
+    """获取个股预警配置（自选列表 + 推送参数）。"""
+
+    try:
+        engine = get_alert_engine()
+        data = engine.get_watchlists_with_names()
+        return jsonify({"ok": True, "data": data})
+    except Exception as e:  # pragma: no cover - 防御性日志
+        logger.exception("获取个股预警配置失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/stock_alerts/add")
+def api_stock_alerts_add():  # type: ignore[override]
+    """向女星股/金店股列表中增加一只股票。
+
+    请求 JSON: {"rule": "nuxing"|"jindian", "query": "中文名或代码"}
+    
+    添加成功后会立刻触发一次预警检测（异步执行，不阻塞响应）。
+    """
+
+    try:
+        payload = request.get_json(silent=True) or {}
+        rule = payload.get("rule")
+        query = payload.get("query")
+        if rule not in ("nuxing", "jindian") or not query:
+            return jsonify({"ok": False, "error": "参数错误: 需要 rule(nuxing/jindian) 和 query"}), 400
+
+        engine = get_alert_engine()
+        ok, info = engine.add_symbol(rule, str(query))
+        if not ok:
+            return jsonify({"ok": False, **info}), 400
+
+        return jsonify({"ok": True, "data": info})
+    except Exception as e:  # pragma: no cover
+        logger.exception("新增个股预警标的失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/stock_alerts/remove")
+def api_stock_alerts_remove():  # type: ignore[override]
+    """从女星股/金店股列表中删除一只股票。
+
+    请求 JSON: {"rule": "nuxing"|"jindian", "symbol": "SHSE.600000"}
+    """
+
+    try:
+        payload = request.get_json(silent=True) or {}
+        rule = payload.get("rule")
+        symbol = payload.get("symbol")
+        if rule not in ("nuxing", "jindian") or not symbol:
+            return jsonify({"ok": False, "error": "参数错误: 需要 rule(nuxing/jindian) 和 symbol"}), 400
+
+        engine = get_alert_engine()
+        ok, msg = engine.remove_symbol(rule, str(symbol))
+        if not ok:
+            return jsonify({"ok": False, "error": msg}), 400
+        
+        # 移除股票时自动删除对应的预警记录
+        engine.delete_alerts_by_symbol(str(symbol))
+        
+        return jsonify({"ok": True})
+    except Exception as e:  # pragma: no cover
+        logger.exception("删除个股预警标的失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/stock_alerts/push_config")
+def api_stock_alerts_push_config():  # type: ignore[override]
+    """更新预警推送参数，并重置检测定时任务间隔。"""
+
+    try:
+        payload = request.get_json(silent=True) or {}
+        engine = get_alert_engine()
+        new_cfg = engine.update_push_config(payload or {})
+
+        # 重新初始化调度任务使新间隔生效
+        init_stock_alert_scheduler()
+
+        return jsonify({"ok": True, "data": new_cfg})
+    except Exception as e:  # pragma: no cover
+        logger.exception("更新个股预警推送配置失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.get("/api/stock_alerts/alerts")
+def api_stock_alerts_alerts():  # type: ignore[override]
+    """获取当前所有个股预警记录。
+
+    可选查询参数 only_active=true 时，仅返回未确认的预警。
+    """
+
+    try:
+        only_active = str(request.args.get("only_active", "false")).lower() in {"1", "true", "yes"}
+        engine = get_alert_engine()
+        rows = engine.list_alerts(only_active=only_active)
+        return jsonify({"ok": True, "data": rows})
+    except Exception as e:  # pragma: no cover
+        logger.exception("获取个股预警记录失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.get("/api/stock_alerts/alerts_to_push")
+def api_stock_alerts_alerts_to_push():  # type: ignore[override]
+    """获取本次需要推送的个股预警列表。
+
+    调用过程中会自动更新 last_push_time / push_count。
+    前端轮询调用该接口用于“新预警提醒”。
+    """
+
+    try:
+        engine = get_alert_engine()
+        rows = engine.get_alerts_to_push()
+        return jsonify({"ok": True, "data": rows})
+    except Exception as e:  # pragma: no cover
+        logger.exception("获取需要推送的个股预警失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/stock_alerts/ack")
+def api_stock_alerts_ack():  # type: ignore[override]
+    """确认收到单条预警，后续不再推送该条记录。"""
+
+    try:
+        payload = request.get_json(silent=True) or {}
+        alert_id = payload.get("id") or payload.get("alert_id")
+        if not alert_id:
+            return jsonify({"ok": False, "error": "缺少预警ID(id)"}), 400
+
+        engine = get_alert_engine()
+        ok = engine.ack_alert(str(alert_id))
+        if not ok:
+            return jsonify({"ok": False, "error": "预警不存在或已被删除"}), 400
+        return jsonify({"ok": True})
+    except Exception as e:  # pragma: no cover
+        logger.exception("确认个股预警失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/stock_alerts/run_detection")
+def api_stock_alerts_run_detection():  # type: ignore[override]
+    """手动触发一次预警检测（不受交易时间窗口限制）。"""
+
+    try:
+        engine = get_alert_engine()
+        logger.info("手动触发预警检测")
+        engine.run_detection_cycle()
+        return jsonify({"ok": True, "message": "检测完成"})
+    except Exception as e:  # pragma: no cover
+        logger.exception("手动触发预警检测失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.get("/api/stock_alerts/scheduler_status")
+def api_stock_alerts_scheduler_status():  # type: ignore[override]
+    """获取预警定时任务状态（下次执行时间、检测间隔等）。"""
+
+    try:
+        global _scheduler
+        result = {
+            "running": False,
+            "next_run_time": None,
+            "check_interval_minutes": 5,
+        }
+
+        engine = get_alert_engine()
+        cfg = engine.get_push_config()
+        result["check_interval_minutes"] = int(cfg.get("check_interval_minutes", 5) or 5)
+
+        if _scheduler is not None and _scheduler.running:
+            result["running"] = True
+            try:
+                job = _scheduler.get_job(_ALERT_DETECTION_JOB_ID)
+                if job and job.next_run_time:
+                    result["next_run_time"] = job.next_run_time.isoformat()
+            except Exception:
+                pass
+
+        return jsonify({"ok": True, "data": result})
+    except Exception as e:  # pragma: no cover
+        logger.exception("获取预警定时任务状态失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/stock_alerts/delete")
+def api_stock_alerts_delete():  # type: ignore[override]
+    """删除单条预警记录。"""
+
+    try:
+        payload = request.get_json(silent=True) or {}
+        alert_id = payload.get("id") or payload.get("alert_id")
+        if not alert_id:
+            return jsonify({"ok": False, "error": "缺少预警ID(id)"}), 400
+
+        engine = get_alert_engine()
+        ok = engine.delete_alert(str(alert_id))
+        if not ok:
+            return jsonify({"ok": False, "error": "预警不存在或已被删除"}), 400
+        return jsonify({"ok": True})
+    except Exception as e:  # pragma: no cover
+        logger.exception("删除预警失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/stock_alerts/delete_all")
+def api_stock_alerts_delete_all():  # type: ignore[override]
+    """删除所有预警记录。"""
+
+    try:
+        engine = get_alert_engine()
+        count = engine.delete_all_alerts()
+        return jsonify({"ok": True, "deleted": count})
+    except Exception as e:  # pragma: no cover
+        logger.exception("删除所有预警失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/api/stock_alerts/delete_old")
+def api_stock_alerts_delete_old():  # type: ignore[override]
+    """删除非今日的预警记录。"""
+
+    try:
+        engine = get_alert_engine()
+        count = engine.delete_old_alerts()
+        return jsonify({"ok": True, "deleted": count})
+    except Exception as e:  # pragma: no cover
+        logger.exception("删除非今日预警失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 def main() -> None:
     """脚本入口函数。
 
@@ -630,6 +943,10 @@ def main() -> None:
     """
     # 先初始化日志系统
     init_logger()
+
+    # 初始化个股预警相关调度任务
+    init_stock_alert_scheduler()
+
     app.run(host="0.0.0.0", port=8818, debug=False)
 
 

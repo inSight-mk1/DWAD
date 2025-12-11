@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from loguru import logger
 
 from ..utils.config import config
+from ..utils.timezone import today_beijing
 
 
 @dataclass
@@ -94,7 +95,7 @@ class GoldMinerFetcher:
         from gm.api import get_symbols
 
         if trade_date is None:
-            trade_date = datetime.now().strftime('%Y-%m-%d')
+            trade_date = today_beijing()
 
         try:
             print(f"正在获取{trade_date}的股票列表...")
