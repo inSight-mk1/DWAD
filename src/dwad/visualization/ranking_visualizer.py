@@ -1521,18 +1521,22 @@ class RankingVisualizer:
                             const alertResp = await fetch('/api/stock_alerts/run_detection', {{ method: 'POST' }});
                             const alertData = await alertResp.json().catch(() => null);
                             if (alertData && alertData.ok) {{
-                                setTaskStatus(statusMsg + '，预警检测完成，正在刷新页面...');
+                                setTaskStatus(statusMsg + '，预警检测完成，正在刷新图表...');
                             }} else {{
-                                setTaskStatus(statusMsg + '，预警检测失败，正在刷新页面...');
+                                setTaskStatus(statusMsg + '，预警检测失败，正在刷新图表...');
                             }}
                         }} catch (e) {{
                             console.error('预警检测失败', e);
-                            setTaskStatus(statusMsg + '，预警检测出错，正在刷新页面...');
+                            setTaskStatus(statusMsg + '，预警检测出错，正在刷新图表...');
                         }}
-                        // 保存状态到 localStorage，刷新后恢复
-                        localStorage.setItem('lastTaskStatus', statusMsg);
-                        localStorage.setItem('lastTaskTime', Date.now().toString());
-                        setTimeout(() => window.location.reload(), 800);
+                        // 动态刷新图表数据，不刷新页面
+                        try {{
+                            await refreshChartsData();
+                            setTaskStatus(statusMsg + '，图表已更新');
+                        }} catch (refreshErr) {{
+                            console.error('刷新图表数据失败', refreshErr);
+                            setTaskStatus(statusMsg + '，图表刷新失败，请手动刷新页面');
+                        }}
                         return;
                     }}
                 }} else {{
@@ -1548,6 +1552,74 @@ class RankingVisualizer:
                     resumeAutoUpdate();
                 }}
             }}
+        }}
+
+        // 动态刷新图表数据（不刷新页面）
+        async function refreshChartsData() {{
+            console.log('开始动态刷新图表数据...');
+            
+            // 1. 获取最新的排名数据
+            const resp = await fetch('/api/ranking_data');
+            const result = await resp.json();
+            if (!resp.ok || !result.ok || !result.data) {{
+                throw new Error(result.error || '获取排名数据失败');
+            }}
+            
+            const data = result.data;
+            const periods = data.periods || [];
+            const totalIndices = data.total_indices || 10;
+            const newRealtimeTimestamp = data.realtime_timestamp;
+            
+            // 2. 更新每个周期的图表
+            periods.forEach((periodData, idx) => {{
+                const chartId = 'chart-' + idx;
+                const chartEl = document.getElementById(chartId);
+                if (!chartEl) {{
+                    console.warn('图表元素不存在:', chartId);
+                    return;
+                }}
+                
+                const traces = periodData.traces || [];
+                const dates = periodData.dates || [];
+                const title = periodData.title || '';
+                
+                // 使用 renderSingleChart 重新渲染图表
+                renderSingleChart(chartId, traces, dates, title, totalIndices);
+            }});
+            
+            // 3. 更新头部时间显示
+            const nowText = new Date().toLocaleString('zh-CN');
+            const updateTimeHeaderMulti = document.getElementById('update-time-header');
+            if (updateTimeHeaderMulti) {{
+                updateTimeHeaderMulti.textContent = nowText;
+            }}
+            
+            // 4. 更新实时数据时间显示
+            if (newRealtimeTimestamp) {{
+                const realtimeDate = new Date(newRealtimeTimestamp);
+                const realtimeText = realtimeDate.toLocaleString('zh-CN', {{
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                }});
+                const headerRealtimeInfoMulti = document.getElementById('realtime-info-header');
+                const headerRealtimeTimeMulti = document.getElementById('realtime-time-header');
+                if (headerRealtimeInfoMulti && headerRealtimeTimeMulti) {{
+                    headerRealtimeInfoMulti.style.display = 'inline';
+                    headerRealtimeTimeMulti.textContent = realtimeText;
+                }}
+            }}
+            
+            // 5. 刷新板块排名数据（如果已加载）
+            if (sectorLoaded) {{
+                sectorLoaded = false;  // 强制重新加载
+                await loadSectorRankingIfNeeded();
+            }}
+            
+            console.log('图表数据刷新完成');
         }}
 
         // 页面加载时恢复上次任务状态（如果是刚刚刷新的）
