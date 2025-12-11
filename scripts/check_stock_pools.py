@@ -18,6 +18,7 @@ from datetime import datetime
 from loguru import logger
 
 from dwad.utils.logger import setup_logger
+from dwad.utils.timezone import now_beijing_str
 from dwad.data_storage.parquet_storage import ParquetStorage
 from dwad.utils.config import config
 
@@ -360,7 +361,7 @@ def _load_full_yaml(path: Path) -> Dict:
 def _save_stock_pools_config(input_cfg_path: Path, full_cfg: Dict, new_pools: Dict, output_path: Optional[Path], backup: bool = True) -> Path:
     write_path = output_path or input_cfg_path
     if backup and (output_path is None):
-        ts = datetime.now().strftime('%Y%m%d-%H%M%S')
+        ts = now_beijing_str('%Y%m%d-%H%M%S')
         backup_path = input_cfg_path.with_suffix(input_cfg_path.suffix + f'.bak-{ts}')
         backup_path.write_text(Path(input_cfg_path).read_text(encoding='utf-8'), encoding='utf-8')
     full_cfg = dict(full_cfg)

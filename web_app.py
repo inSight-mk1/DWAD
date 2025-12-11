@@ -14,6 +14,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from dwad.utils.config import config
+from dwad.utils.timezone import now_beijing
 # We might need these if we want to reuse logic, but loading parquets directly is often faster/simpler for read-only dashboard
 
 st.set_page_config(
@@ -187,8 +188,8 @@ st.sidebar.info("提示：操作完成后请刷新页面以加载最新数据")
 # --- Main Content ---
 st.title("板块分析仪表板")
 
-# Determine default start date (e.g., beginning of current year)
-default_start_date = datetime(datetime.now().year, 1, 1).date()
+# Determine default start date (e.g., beginning of current year, using Beijing time)
+default_start_date = datetime(now_beijing().year, 1, 1).date()
 
 tab1, tab2, tab3 = st.tabs(["🏆 板块排名 (Sector Ranking)", "📋 板块个股 (Sector Stocks)", "📈 对比报告 (Reports)"])
 

@@ -1116,6 +1116,98 @@ class RankingVisualizer:
         .legend-btn:hover {{
             background: #e9ecef;
         }}
+        .alerts-layout {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            margin-top: 8px;
+        }}
+
+        .alerts-column {{
+            flex: 1 1 260px;
+            min-width: 240px;
+        }}
+
+        .alerts-section-title {{
+            font-size: 14px;
+            font-weight: 600;
+            color: #343a40;
+            margin-bottom: 6px;
+        }}
+
+        .alerts-form-row {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+            font-size: 12px;
+        }}
+
+        .alerts-form-row input {{
+            flex: 1;
+            padding: 2px 6px;
+            font-size: 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+        }}
+
+        .alerts-form-row button {{
+            padding: 3px 8px;
+            font-size: 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            background: #f8f9fa;
+            color: #495057;
+            cursor: pointer;
+        }}
+
+        .alerts-form-row button:hover {{
+            background: #e9ecef;
+        }}
+
+        .alerts-badge {{
+            display: none;
+            margin-left: 4px;
+            padding: 0 5px;
+            min-width: 16px;
+            border-radius: 10px;
+            background: #dc3545;
+            color: #fff;
+            font-size: 11px;
+        }}
+
+        .alerts-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }}
+
+        .alerts-table th,
+        .alerts-table td {{
+            padding: 6px 8px;
+            border-bottom: 1px solid #e9ecef;
+            white-space: nowrap;
+            text-align: left;
+        }}
+
+        .alerts-table th {{
+            background: #f8f9fa;
+            color: #495057;
+        }}
+
+        .alerts-actions button {{
+            padding: 2px 6px;
+            font-size: 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            background: #f8f9fa;
+            color: #495057;
+            cursor: pointer;
+        }}
+
+        .alerts-actions button:hover {{
+            background: #e9ecef;
+        }}
 
         .task-status-text {{
             min-width: 150px;
@@ -1160,7 +1252,7 @@ class RankingVisualizer:
             <div style="display:flex;align-items:center;gap:8px;color:#495057;">
                 <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
                     <input type="checkbox" id="auto-update-toggle" style="cursor:pointer;">
-                    <span>自动更新排名</span>
+                    <span>自动刷新+预警检测</span>
                 </label>
                 <div id="auto-update-settings" style="display:none;align-items:center;gap:6px;">
                     <span>频率(分钟):</span>
@@ -1174,11 +1266,13 @@ class RankingVisualizer:
             </div>
         </div>
         
-        <!-- Tab 导航：排名趋势 / 板块排名 / 个股排名 -->
         <div class="tabs">
             <button id="tab-btn-trend" class="tab-button active">排名趋势</button>
             <button id="tab-btn-sector" class="tab-button">板块排名</button>
             <button id="tab-btn-stock" class="tab-button">个股排名</button>
+            <button id="tab-btn-alerts" class="tab-button" style="margin-left:auto;">个股预警
+                <span id="alerts-tab-badge" class="alerts-badge"></span>
+            </button>
         </div>
         
         <!-- Tab 1: 排名趋势（原有多周期图表） -->
@@ -1215,7 +1309,6 @@ class RankingVisualizer:
             <p style="font-size:12px;color:#6c757d;margin-top:4px;">提示：点击表头可排序，点击板块名称可查看个股（后续实现）。</p>
         </div>
         
-        <!-- Tab 3: 个股排名列表（表格） -->
         <div id="tab-stock" class="tab-content hidden">
             <h2 class="chart-title" id="stock-table-title">个股排名列表</h2>
             <div style="margin:4px 0 8px 0;font-size:12px;color:#495057;display:flex;align-items:center;gap:4px;">
@@ -1243,6 +1336,98 @@ class RankingVisualizer:
                 </table>
             </div>
             <p style="font-size:12px;color:#6c757d;margin-top:4px;">提示：点击表头可排序。</p>
+        </div>
+        <div id="tab-alerts" class="tab-content hidden">
+            <h2 class="chart-title">个股预警</h2>
+            <div class="alerts-layout">
+                <div class="alerts-column">
+                    <div class="alerts-section-title">女星股自选列表</div>
+                    <div class="alerts-form-row">
+                        <input id="alerts-input-nuxing" type="text" placeholder="输入名称或代码，例如 688333">
+                        <button id="alerts-add-nuxing-btn">新增</button>
+                    </div>
+                    <div class="sector-table-container" style="max-height:200px;overflow-y:auto;">
+                        <table class="alerts-table" id="alerts-table-nuxing">
+                            <thead>
+                                <tr>
+                                    <th>名称</th>
+                                    <th>代码</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="alerts-tbody-nuxing"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="alerts-column">
+                    <div class="alerts-section-title">金店股自选列表</div>
+                    <div class="alerts-form-row">
+                        <input id="alerts-input-jindian" type="text" placeholder="输入名称或代码，例如 600519">
+                        <button id="alerts-add-jindian-btn">新增</button>
+                    </div>
+                    <div class="sector-table-container" style="max-height:200px;overflow-y:auto;">
+                        <table class="alerts-table" id="alerts-table-jindian">
+                            <thead>
+                                <tr>
+                                    <th>名称</th>
+                                    <th>代码</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="alerts-tbody-jindian"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="alerts-column">
+                    <div class="alerts-section-title">推送设置</div>
+                    <div class="alerts-form-row">
+                        <span style="min-width:130px;">重复推送间隔(分钟)</span>
+                        <input id="alerts-push-push-interval" type="number" min="1" style="width:60px;">
+                    </div>
+                    <div class="alerts-form-row" style="justify-content:flex-start;gap:8px;">
+                        <button id="alerts-push-save-btn">保存</button>
+                        <span id="alerts-push-status" style="font-size:12px;color:#6c757d;"></span>
+                    </div>
+                    <div style="margin-top:12px;border-top:1px solid #dee2e6;padding-top:12px;">
+                        <div class="alerts-section-title">预警检测</div>
+                        <div class="alerts-form-row" style="flex-wrap:wrap;gap:8px;">
+                            <button id="alerts-run-detection-btn" style="padding:6px 12px;background:#007bff;color:#fff;border:none;border-radius:4px;cursor:pointer;">立即检测</button>
+                            <span id="alerts-detection-status" style="font-size:12px;color:#6c757d;"></span>
+                        </div>
+                        <div style="font-size:12px;color:#6c757d;margin-top:6px;">检测间隔与页面顶部"自动刷新"同步</div>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top:16px;">
+                <div class="alerts-section-title">当前预警</div>
+                <div style="margin:4px 0 8px 0;font-size:12px;color:#495057;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                        <input id="alerts-only-active" type="checkbox" checked>
+                        <span>仅显示未确认</span>
+                    </label>
+                    <button id="alerts-refresh-btn" style="padding:3px 8px;font-size:12px;border:1px solid #ced4da;border-radius:4px;background:#f8f9fa;color:#495057;cursor:pointer;">刷新预警</button>
+                    <button id="alerts-delete-old-btn" style="padding:3px 8px;font-size:12px;border:1px solid #ffc107;border-radius:4px;background:#fff3cd;color:#856404;cursor:pointer;">删除非今日</button>
+                    <button id="alerts-delete-all-btn" style="padding:3px 8px;font-size:12px;border:1px solid #dc3545;border-radius:4px;background:#f8d7da;color:#721c24;cursor:pointer;">删除全部</button>
+                </div>
+                <div class="sector-table-container">
+                    <table class="alerts-table" id="alerts-table-alerts">
+                        <thead>
+                            <tr>
+                                <th>规则</th>
+                                <th>代码</th>
+                                <th>名称</th>
+                                <th>日期</th>
+                                <th>关键指标</th>
+                                <th>首次触发</th>
+                                <th>推送次数</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alerts-tbody-alerts"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
         
         <div class="footer">
@@ -1330,7 +1515,20 @@ class RankingVisualizer:
                         setTaskStatus(taskName + '已完成：' + completedTime);
                     }} else if (isUpdate) {{
                         const statusMsg = taskName + '已完成：' + completedTime;
-                        setTaskStatus(statusMsg + '，正在刷新页面...');
+                        setTaskStatus(statusMsg + '，正在执行预警检测...');
+                        // 更新排名完成后自动执行预警检测
+                        try {{
+                            const alertResp = await fetch('/api/stock_alerts/run_detection', {{ method: 'POST' }});
+                            const alertData = await alertResp.json().catch(() => null);
+                            if (alertData && alertData.ok) {{
+                                setTaskStatus(statusMsg + '，预警检测完成，正在刷新页面...');
+                            }} else {{
+                                setTaskStatus(statusMsg + '，预警检测失败，正在刷新页面...');
+                            }}
+                        }} catch (e) {{
+                            console.error('预警检测失败', e);
+                            setTaskStatus(statusMsg + '，预警检测出错，正在刷新页面...');
+                        }}
                         // 保存状态到 localStorage，刷新后恢复
                         localStorage.setItem('lastTaskStatus', statusMsg);
                         localStorage.setItem('lastTaskTime', Date.now().toString());
@@ -1411,7 +1609,7 @@ class RankingVisualizer:
         }}
 
         // ===========================
-        // 板块排名 Tab & 表格逻辑
+        // 板块排名 / 个股排名 / 个股预警 Tab 逻辑
         // ===========================
 
         const SECTOR_START_DATE_KEY = 'dwad_sector_start_date';
@@ -1668,9 +1866,11 @@ class RankingVisualizer:
             const btnTrend = document.getElementById('tab-btn-trend');
             const btnSector = document.getElementById('tab-btn-sector');
             const btnStock = document.getElementById('tab-btn-stock');
+            const btnAlerts = document.getElementById('tab-btn-alerts');
             const tabTrend = document.getElementById('tab-trend');
             const tabSector = document.getElementById('tab-sector');
             const tabStock = document.getElementById('tab-stock');
+            const tabAlerts = document.getElementById('tab-alerts');
             if (!btnStock || !tabStock || !btnTrend || !btnSector || !tabTrend || !tabSector) return;
 
             currentStockSector = sectorName;
@@ -1678,9 +1878,11 @@ class RankingVisualizer:
             btnTrend.classList.remove('active');
             btnSector.classList.remove('active');
             btnStock.classList.add('active');
+            if (btnAlerts) btnAlerts.classList.remove('active');
             tabTrend.classList.add('hidden');
             tabSector.classList.add('hidden');
             tabStock.classList.remove('hidden');
+            if (tabAlerts) tabAlerts.classList.add('hidden');
 
             let startDate = null;
             try {{
@@ -1701,13 +1903,573 @@ class RankingVisualizer:
             loadStockRanking(sectorName, startDate);
         }}
 
+        // 个股预警 Tab 状态与工具函数
+        let alertsWatchlist = {{ nuxing: [], jindian: [] }};
+        let alertsPushConfig = null;
+        let alertsList = [];
+        let alertsPollingTimer = null;
+        let alertsInitialized = false;
+
+        function setAlertsBadge(unackedCount) {{
+            const badge = document.getElementById('alerts-tab-badge');
+            if (!badge) return;
+            if (unackedCount > 0) {{
+                badge.textContent = String(unackedCount);
+                badge.style.display = 'inline-block';
+            }} else {{
+                badge.textContent = '';
+                badge.style.display = 'none';
+            }}
+        }}
+
+        async function loadAlertsConfig() {{
+            try {{
+                const resp = await fetch('/api/stock_alerts/config');
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok || !data || !data.ok) {{
+                    console.error('获取个股预警配置失败', data);
+                    return;
+                }}
+                const payload = data.data || {{}};
+                alertsWatchlist.nuxing = payload.nuxing || [];
+                alertsWatchlist.jindian = payload.jindian || [];
+                alertsPushConfig = payload.push || null;
+                renderAlertsWatchlists();
+                updateAlertsPushInputs();
+            }} catch (e) {{
+                console.error('调用 /api/stock_alerts/config 失败', e);
+            }}
+        }}
+
+        async function loadAlertsList(onlyActive) {{
+            try {{
+                const qs = onlyActive ? '?only_active=true' : '';
+                const resp = await fetch('/api/stock_alerts/alerts' + qs);
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok || !data || !data.ok) {{
+                    console.error('获取个股预警列表失败', data);
+                    return;
+                }}
+                alertsList = Array.isArray(data.data) ? data.data : [];
+                renderAlertsTable();
+            }} catch (e) {{
+                console.error('调用 /api/stock_alerts/alerts 失败', e);
+            }}
+        }}
+
+        function renderAlertsWatchlists() {{
+            const nBody = document.getElementById('alerts-tbody-nuxing');
+            const jBody = document.getElementById('alerts-tbody-jindian');
+            if (nBody) {{
+                nBody.innerHTML = '';
+                (alertsWatchlist.nuxing || []).forEach((item) => {{
+                    const tr = document.createElement('tr');
+                    const tdName = document.createElement('td');
+                    const tdCode = document.createElement('td');
+                    const tdOps = document.createElement('td');
+                    tdName.textContent = item.name || '';
+                    tdCode.textContent = item.symbol || '';
+                    tdOps.className = 'alerts-actions';
+                    const btn = document.createElement('button');
+                    btn.textContent = '删除';
+                    btn.addEventListener('click', async () => {{
+                        try {{
+                            const resp = await fetch('/api/stock_alerts/remove', {{
+                                method: 'POST',
+                                headers: {{ 'Content-Type': 'application/json' }},
+                                body: JSON.stringify({{ rule: 'nuxing', symbol: item.symbol }})
+                            }});
+                            const data = await resp.json().catch(() => null);
+                            if (!resp.ok || !data || !data.ok) {{
+                                alert((data && data.error) || '删除失败');
+                                return;
+                            }}
+                            await loadAlertsConfig();
+                        }} catch (e) {{
+                            console.error('删除女星股失败', e);
+                        }}
+                    }});
+                    tdOps.appendChild(btn);
+                    tr.appendChild(tdName);
+                    tr.appendChild(tdCode);
+                    tr.appendChild(tdOps);
+                    nBody.appendChild(tr);
+                }});
+            }}
+            if (jBody) {{
+                jBody.innerHTML = '';
+                (alertsWatchlist.jindian || []).forEach((item) => {{
+                    const tr = document.createElement('tr');
+                    const tdName = document.createElement('td');
+                    const tdCode = document.createElement('td');
+                    const tdOps = document.createElement('td');
+                    tdName.textContent = item.name || '';
+                    tdCode.textContent = item.symbol || '';
+                    tdOps.className = 'alerts-actions';
+                    const btn = document.createElement('button');
+                    btn.textContent = '删除';
+                    btn.addEventListener('click', async () => {{
+                        try {{
+                            const resp = await fetch('/api/stock_alerts/remove', {{
+                                method: 'POST',
+                                headers: {{ 'Content-Type': 'application/json' }},
+                                body: JSON.stringify({{ rule: 'jindian', symbol: item.symbol }})
+                            }});
+                            const data = await resp.json().catch(() => null);
+                            if (!resp.ok || !data || !data.ok) {{
+                                alert((data && data.error) || '删除失败');
+                                return;
+                            }}
+                            await loadAlertsConfig();
+                        }} catch (e) {{
+                            console.error('删除金店股失败', e);
+                        }}
+                    }});
+                    tdOps.appendChild(btn);
+                    tr.appendChild(tdName);
+                    tr.appendChild(tdCode);
+                    tr.appendChild(tdOps);
+                    jBody.appendChild(tr);
+                }});
+            }}
+        }}
+
+        function updateAlertsPushInputs() {{
+            if (!alertsPushConfig) return;
+            const c = alertsPushConfig;
+            const elPush = document.getElementById('alerts-push-push-interval');
+            if (elPush && c.push_interval_minutes != null) elPush.value = String(c.push_interval_minutes);
+        }}
+
+        function renderAlertsTable() {{
+            const tbody = document.getElementById('alerts-tbody-alerts');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            let unacked = 0;
+            alertsList.forEach((row) => {{
+                const tr = document.createElement('tr');
+                const ruleMap = {{ nuxing: '女星股', jindian: '金店股' }};
+                const tdRule = document.createElement('td');
+                tdRule.textContent = ruleMap[row.rule] || row.rule || '';
+                const tdCode = document.createElement('td');
+                tdCode.textContent = row.symbol || '';
+                const tdName = document.createElement('td');
+                tdName.textContent = row.name || '';
+                const tdDate = document.createElement('td');
+                tdDate.textContent = row.date || '';
+                const tdMetrics = document.createElement('td');
+                try {{
+                    const m = row.metrics || {{}};
+                    if (Object.keys(m).length) {{
+                        // 格式化为易读的多行文本
+                        tdMetrics.innerHTML = Object.entries(m).map(([k, v]) => `<span style="white-space:nowrap;">${{k}}: ${{v}}</span>`).join('<br>');
+                    }} else {{
+                        tdMetrics.textContent = '';
+                    }}
+                }} catch (e) {{
+                    tdMetrics.textContent = '';
+                }}
+                const tdFirst = document.createElement('td');
+                tdFirst.textContent = row.first_trigger_time || '';
+                const tdCount = document.createElement('td');
+                tdCount.textContent = String(row.push_count || 0);
+                const tdStatus = document.createElement('td');
+                const ack = !!row.acknowledged;
+                if (!ack) unacked += 1;
+                tdStatus.textContent = ack ? '已确认' : '未确认';
+                const tdOps = document.createElement('td');
+                tdOps.className = 'alerts-actions';
+                const btn = document.createElement('button');
+                btn.textContent = ack ? '已确认' : '确认收到';
+                btn.disabled = ack;
+                if (!ack) {{
+                    btn.addEventListener('click', async () => {{
+                        try {{
+                            const resp = await fetch('/api/stock_alerts/ack', {{
+                                method: 'POST',
+                                headers: {{ 'Content-Type': 'application/json' }},
+                                body: JSON.stringify({{ id: row.id }})
+                            }});
+                            const data = await resp.json().catch(() => null);
+                            if (!resp.ok || !data || !data.ok) {{
+                                alert((data && data.error) || '确认失败');
+                                return;
+                            }}
+                            await loadAlertsList(document.getElementById('alerts-only-active')?.checked);
+                        }} catch (e) {{
+                            console.error('确认预警失败', e);
+                        }}
+                    }});
+                }}
+                tdOps.appendChild(btn);
+                
+                // 删除按钮
+                const delBtn = document.createElement('button');
+                delBtn.textContent = '删除';
+                delBtn.style.marginLeft = '4px';
+                delBtn.style.color = '#dc3545';
+                delBtn.addEventListener('click', async () => {{
+                    if (!confirm('确定删除此预警记录？')) return;
+                    try {{
+                        const resp = await fetch('/api/stock_alerts/delete', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ id: row.id }})
+                        }});
+                        const data = await resp.json().catch(() => null);
+                        if (!resp.ok || !data || !data.ok) {{
+                            alert((data && data.error) || '删除失败');
+                            return;
+                        }}
+                        await loadAlertsList(document.getElementById('alerts-only-active')?.checked);
+                    }} catch (e) {{
+                        console.error('删除预警失败', e);
+                    }}
+                }});
+                tdOps.appendChild(delBtn);
+
+                tr.appendChild(tdRule);
+                tr.appendChild(tdCode);
+                tr.appendChild(tdName);
+                tr.appendChild(tdDate);
+                tr.appendChild(tdMetrics);
+                tr.appendChild(tdFirst);
+                tr.appendChild(tdCount);
+                tr.appendChild(tdStatus);
+                tr.appendChild(tdOps);
+                tbody.appendChild(tr);
+            }});
+            setAlertsBadge(unacked);
+        }}
+
+        async function saveAlertsPushConfig() {{
+            const elPush = document.getElementById('alerts-push-push-interval');
+            const statusEl = document.getElementById('alerts-push-status');
+            const payload = {{}};
+            if (elPush && elPush.value) payload.push_interval_minutes = Number(elPush.value);
+            try {{
+                const resp = await fetch('/api/stock_alerts/push_config', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify(payload)
+                }});
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok || !data || !data.ok) {{
+                    if (statusEl) statusEl.textContent = (data && data.error) || '保存失败';
+                    return;
+                }}
+                alertsPushConfig = data.data || null;
+                updateAlertsPushInputs();
+                if (statusEl) statusEl.textContent = '已保存';
+            }} catch (e) {{
+                console.error('保存推送配置失败', e);
+                if (statusEl) statusEl.textContent = '保存失败';
+            }}
+        }}
+
+        async function initAlertsTab() {{
+            if (alertsInitialized) return;
+            alertsInitialized = true;
+
+            // 请求系统通知权限
+            requestNotificationPermission();
+
+            await loadAlertsConfig();
+            await loadAlertsList(true);
+
+            const addNuxingBtn = document.getElementById('alerts-add-nuxing-btn');
+            const addJindianBtn = document.getElementById('alerts-add-jindian-btn');
+            const inputNuxing = document.getElementById('alerts-input-nuxing');
+            const inputJindian = document.getElementById('alerts-input-jindian');
+            const pushSaveBtn = document.getElementById('alerts-push-save-btn');
+            const onlyActiveCb = document.getElementById('alerts-only-active');
+            const refreshBtn = document.getElementById('alerts-refresh-btn');
+
+            if (addNuxingBtn && inputNuxing) {{
+                addNuxingBtn.addEventListener('click', async () => {{
+                    const q = (inputNuxing.value || '').trim();
+                    if (!q) return;
+                    try {{
+                        const resp = await fetch('/api/stock_alerts/add', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ rule: 'nuxing', query: q }})
+                        }});
+                        const data = await resp.json().catch(() => null);
+                        if (!resp.ok || !data || !data.ok) {{
+                            alert((data && data.error) || '新增失败');
+                            return;
+                        }}
+                        inputNuxing.value = '';
+                        await loadAlertsConfig();
+                    }} catch (e) {{
+                        console.error('新增女星股失败', e);
+                    }}
+                }});
+            }}
+
+            if (addJindianBtn && inputJindian) {{
+                addJindianBtn.addEventListener('click', async () => {{
+                    const q = (inputJindian.value || '').trim();
+                    if (!q) return;
+                    try {{
+                        const resp = await fetch('/api/stock_alerts/add', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ rule: 'jindian', query: q }})
+                        }});
+                        const data = await resp.json().catch(() => null);
+                        if (!resp.ok || !data || !data.ok) {{
+                            alert((data && data.error) || '新增失败');
+                            return;
+                        }}
+                        inputJindian.value = '';
+                        await loadAlertsConfig();
+                    }} catch (e) {{
+                        console.error('新增金店股失败', e);
+                    }}
+                }});
+            }}
+
+            if (pushSaveBtn) {{
+                pushSaveBtn.addEventListener('click', saveAlertsPushConfig);
+            }}
+
+            if (refreshBtn && onlyActiveCb) {{
+                refreshBtn.addEventListener('click', () => {{
+                    loadAlertsList(!!onlyActiveCb.checked);
+                }});
+            }}
+
+            // 手动检测按钮
+            const runDetectionBtn = document.getElementById('alerts-run-detection-btn');
+            const detectionStatusEl = document.getElementById('alerts-detection-status');
+            if (runDetectionBtn) {{
+                runDetectionBtn.addEventListener('click', async () => {{
+                    runDetectionBtn.disabled = true;
+                    runDetectionBtn.textContent = '检测中...';
+                    if (detectionStatusEl) detectionStatusEl.textContent = '正在执行预警检测...';
+                    try {{
+                        const resp = await fetch('/api/stock_alerts/run_detection', {{ method: 'POST' }});
+                        const data = await resp.json().catch(() => null);
+                        if (!resp.ok || !data || !data.ok) {{
+                            if (detectionStatusEl) detectionStatusEl.textContent = '检测失败: ' + ((data && data.error) || '未知错误');
+                        }} else {{
+                            if (detectionStatusEl) detectionStatusEl.textContent = '检测完成 (' + formatTime() + ')';
+                            // 刷新预警列表
+                            await loadAlertsList(document.getElementById('alerts-only-active')?.checked);
+                            // 立即检查是否有需要推送的预警并发送通知
+                            await pollAlertsToPushOnce();
+                        }}
+                    }} catch (e) {{
+                        console.error('手动检测失败', e);
+                        if (detectionStatusEl) detectionStatusEl.textContent = '检测失败: 网络错误';
+                    }} finally {{
+                        runDetectionBtn.disabled = false;
+                        runDetectionBtn.textContent = '立即检测';
+                    }}
+                }});
+            }}
+
+            // 删除非今日按钮
+            const deleteOldBtn = document.getElementById('alerts-delete-old-btn');
+            if (deleteOldBtn) {{
+                deleteOldBtn.addEventListener('click', async () => {{
+                    if (!confirm('确定删除所有非今日的预警记录？')) return;
+                    try {{
+                        const resp = await fetch('/api/stock_alerts/delete_old', {{ method: 'POST' }});
+                        const data = await resp.json().catch(() => null);
+                        if (!resp.ok || !data || !data.ok) {{
+                            alert((data && data.error) || '删除失败');
+                            return;
+                        }}
+                        alert('已删除 ' + (data.deleted || 0) + ' 条非今日预警');
+                        await loadAlertsList(document.getElementById('alerts-only-active')?.checked);
+                    }} catch (e) {{
+                        console.error('删除非今日预警失败', e);
+                    }}
+                }});
+            }}
+
+            // 删除全部按钮
+            const deleteAllBtn = document.getElementById('alerts-delete-all-btn');
+            if (deleteAllBtn) {{
+                deleteAllBtn.addEventListener('click', async () => {{
+                    if (!confirm('确定删除所有预警记录？此操作不可恢复！')) return;
+                    try {{
+                        const resp = await fetch('/api/stock_alerts/delete_all', {{ method: 'POST' }});
+                        const data = await resp.json().catch(() => null);
+                        if (!resp.ok || !data || !data.ok) {{
+                            alert((data && data.error) || '删除失败');
+                            return;
+                        }}
+                        alert('已删除 ' + (data.deleted || 0) + ' 条预警');
+                        await loadAlertsList(document.getElementById('alerts-only-active')?.checked);
+                    }} catch (e) {{
+                        console.error('删除全部预警失败', e);
+                    }}
+                }});
+            }}
+
+            // 启动固定10秒轮询预警列表（不刷新整页）
+            setInterval(() => {{
+                loadAlertsList(document.getElementById('alerts-only-active')?.checked);
+            }}, 10000);
+        }}
+
+        // 定时任务状态和倒计时
+        let schedulerNextRunTime = null;
+        let schedulerCountdownTimer = null;
+        let schedulerCheckInterval = 5;  // 默认检测间隔（分钟）
+
+        async function updateSchedulerStatus() {{
+            const infoEl = document.getElementById('alerts-scheduler-info');
+            if (!infoEl) return;
+            try {{
+                const resp = await fetch('/api/stock_alerts/scheduler_status');
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok || !data || !data.ok) {{
+                    infoEl.textContent = '无法获取定时任务状态';
+                    return;
+                }}
+                const info = data.data || {{}};
+                const running = info.running;
+                schedulerCheckInterval = info.check_interval_minutes || 5;
+                const nextRun = info.next_run_time;
+
+                if (!running) {{
+                    infoEl.textContent = '定时任务未运行';
+                    schedulerNextRunTime = null;
+                    return;
+                }}
+
+                if (nextRun) {{
+                    schedulerNextRunTime = new Date(nextRun);
+                    updateCountdownDisplay();
+                    // 启动倒计时更新（纯本地计算，不发请求）
+                    if (!schedulerCountdownTimer) {{
+                        schedulerCountdownTimer = setInterval(updateCountdownDisplay, 1000);
+                    }}
+                }} else {{
+                    infoEl.textContent = '定时任务运行中，间隔 ' + schedulerCheckInterval + ' 分钟';
+                    schedulerNextRunTime = null;
+                }}
+            }} catch (e) {{
+                console.error('获取定时任务状态失败', e);
+                if (infoEl) infoEl.textContent = '获取状态失败';
+            }}
+        }}
+
+        function updateCountdownDisplay() {{
+            const infoEl = document.getElementById('alerts-scheduler-info');
+            if (!infoEl || !schedulerNextRunTime) return;
+
+            const now = new Date();
+            const diff = schedulerNextRunTime - now;
+
+            if (diff <= 0) {{
+                infoEl.textContent = '定时检测执行中...';
+                // 倒计时结束后，重新计算下一次执行时间（本地计算，不发请求）
+                schedulerNextRunTime = new Date(now.getTime() + schedulerCheckInterval * 60 * 1000);
+                return;
+            }}
+
+            const totalSec = Math.floor(diff / 1000);
+            const min = Math.floor(totalSec / 60);
+            const sec = totalSec % 60;
+            const timeStr = min > 0 ? min + '分' + sec + '秒' : sec + '秒';
+            infoEl.textContent = '下次定时检测: ' + timeStr + ' 后';
+        }}
+
+        // 请求系统通知权限
+        function requestNotificationPermission() {{
+            if ('Notification' in window && Notification.permission === 'default') {{
+                Notification.requestPermission();
+            }}
+        }}
+
+        // 发送系统通知
+        function sendSystemNotification(alert) {{
+            if (!('Notification' in window)) return;
+            if (Notification.permission !== 'granted') {{
+                Notification.requestPermission();
+                return;
+            }}
+            const ruleMap = {{ nuxing: '女星股', jindian: '金店股' }};
+            const ruleName = ruleMap[alert.rule] || alert.rule;
+            const title = `📢 ${{ruleName}}预警: ${{alert.name || alert.symbol}}`;
+            const m = alert.metrics || {{}};
+            const metricsText = Object.entries(m).map(([k, v]) => `${{k}}: ${{v}}`).join(' | ');
+            const body = `${{alert.date}}\n${{metricsText}}`;
+            try {{
+                const notification = new Notification(title, {{
+                    body: body,
+                    icon: '📊',
+                    tag: alert.id,
+                    requireInteraction: true  // 保持通知直到用户交互
+                }});
+                notification.onclick = () => {{
+                    window.focus();
+                    // 切换到预警 Tab
+                    const btnAlerts = document.getElementById('tab-btn-alerts');
+                    if (btnAlerts) btnAlerts.click();
+                    notification.close();
+                }};
+            }} catch (e) {{
+                console.error('发送系统通知失败', e);
+            }}
+        }}
+
+        async function pollAlertsToPushOnce() {{
+            try {{
+                const resp = await fetch('/api/stock_alerts/alerts_to_push');
+                const data = await resp.json().catch(() => null);
+                if (!resp.ok || !data || !data.ok) return;
+                const items = Array.isArray(data.data) ? data.data : [];
+                if (!items.length) return;
+
+                // 对每个需要推送的预警发送系统通知
+                items.forEach((it) => {{
+                    sendSystemNotification(it);
+                }});
+
+                // 合并到本地 alertsList，并更新表格和角标
+                const existingIds = new Set(alertsList.map((x) => x.id));
+                let changed = false;
+                items.forEach((it) => {{
+                    const existing = alertsList.find((x) => x.id === it.id);
+                    if (existing) {{
+                        // 更新已有记录
+                        Object.assign(existing, it);
+                        changed = true;
+                    }} else {{
+                        alertsList.push(it);
+                        changed = true;
+                    }}
+                }});
+                if (changed) {{
+                    renderAlertsTable();
+                }}
+            }} catch (e) {{
+                console.error('轮询 alerts_to_push 失败', e);
+            }}
+        }}
+
+        function startAlertsPolling() {{
+            if (alertsPollingTimer) return;
+            // 默认每 60 秒轮询一次即可，真正的推送节奏由后端控制
+            alertsPollingTimer = setInterval(pollAlertsToPushOnce, 60000);
+        }}
+
         function initTabsAndSectorTable() {{
             const btnTrend = document.getElementById('tab-btn-trend');
             const btnSector = document.getElementById('tab-btn-sector');
             const btnStock = document.getElementById('tab-btn-stock');
+            const btnAlerts = document.getElementById('tab-btn-alerts');
             const tabTrend = document.getElementById('tab-trend');
             const tabSector = document.getElementById('tab-sector');
             const tabStock = document.getElementById('tab-stock');
+            const tabAlerts = document.getElementById('tab-alerts');
             const startInput = document.getElementById('sector-start-date-input');
             const startBtn = document.getElementById('sector-start-date-btn');
             const stockStartInput = document.getElementById('stock-start-date-input');
@@ -1742,17 +2504,23 @@ class RankingVisualizer:
             btnTrend.addEventListener('click', () => {{
                 btnTrend.classList.add('active');
                 btnSector.classList.remove('active');
+                if (btnStock) btnStock.classList.remove('active');
+                if (btnAlerts) btnAlerts.classList.remove('active');
                 tabTrend.classList.remove('hidden');
                 tabSector.classList.add('hidden');
+                if (tabStock) tabStock.classList.add('hidden');
+                if (tabAlerts) tabAlerts.classList.add('hidden');
             }});
 
             btnSector.addEventListener('click', () => {{
                 btnSector.classList.add('active');
                 btnTrend.classList.remove('active');
                 if (btnStock) btnStock.classList.remove('active');
+                if (btnAlerts) btnAlerts.classList.remove('active');
                 tabSector.classList.remove('hidden');
                 tabTrend.classList.add('hidden');
-                tabStock.classList.add('hidden');
+                if (tabStock) tabStock.classList.add('hidden');
+                if (tabAlerts) tabAlerts.classList.add('hidden');
 
                 let saved = null;
                 try {{
@@ -1779,9 +2547,11 @@ class RankingVisualizer:
                     btnStock.classList.add('active');
                     btnTrend.classList.remove('active');
                     btnSector.classList.remove('active');
+                    if (btnAlerts) btnAlerts.classList.remove('active');
                     tabStock.classList.remove('hidden');
                     tabTrend.classList.add('hidden');
                     tabSector.classList.add('hidden');
+                    if (tabAlerts) tabAlerts.classList.add('hidden');
                     if (currentStockSector) {{
                         let startDate = null;
                         try {{
@@ -1800,6 +2570,22 @@ class RankingVisualizer:
                         }}
                         loadStockRanking(currentStockSector, startDate);
                     }}
+                }});
+            }}
+
+            if (btnAlerts && tabAlerts) {{
+                btnAlerts.addEventListener('click', async () => {{
+                    btnAlerts.classList.add('active');
+                    btnTrend.classList.remove('active');
+                    btnSector.classList.remove('active');
+                    if (btnStock) btnStock.classList.remove('active');
+                    tabAlerts.classList.remove('hidden');
+                    tabTrend.classList.add('hidden');
+                    tabSector.classList.add('hidden');
+                    if (tabStock) tabStock.classList.add('hidden');
+
+                    await initAlertsTab();
+                    startAlertsPolling();
                 }});
             }}
 
@@ -1903,6 +2689,22 @@ class RankingVisualizer:
                     renderStockTable();
                 }});
             }});
+
+            if (btnAlerts && tabAlerts) {{
+                btnAlerts.addEventListener('click', async () => {{
+                    btnAlerts.classList.add('active');
+                    btnTrend.classList.remove('active');
+                    btnSector.classList.remove('active');
+                    if (btnStock) btnStock.classList.remove('active');
+                    tabAlerts.classList.remove('hidden');
+                    tabTrend.classList.add('hidden');
+                    tabSector.classList.add('hidden');
+                    if (tabStock) tabStock.classList.add('hidden');
+
+                    await initAlertsTab();
+                    startAlertsPolling();
+                }});
+            }}
         }}
 
         // 通用图表渲染函数

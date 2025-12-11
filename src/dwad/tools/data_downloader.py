@@ -12,6 +12,7 @@ from dwad.data_fetcher.goldminer_fetcher import GoldMinerFetcher
 from dwad.data_storage.parquet_storage import ParquetStorage
 from dwad.utils.logger import setup_logger
 from dwad.utils.config import config
+from dwad.utils.timezone import today_beijing
 
 
 class DataDownloader:
@@ -32,7 +33,7 @@ class DataDownloader:
         """
         # 从配置文件读取参数
         start_date = config.get('data_fetcher.default_start_date', '2020-01-01')
-        end_date = datetime.now().strftime('%Y-%m-%d')
+        end_date = today_beijing()
         batch_size = config.get('data_fetcher.batch_size', 50)
         resume = config.get('data_fetcher.resume_download', True)
 
@@ -306,7 +307,7 @@ class DataDownloader:
         
         # 从配置文件读取参数
         start_date = config.get('data_fetcher.default_start_date', '2020-01-01')
-        end_date = datetime.now().strftime('%Y-%m-%d')
+        end_date = today_beijing()
         batch_size = config.get('data_fetcher.batch_size', 50)
         
         logger.info(f"时间范围: {start_date} 到 {end_date}")
