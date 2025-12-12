@@ -46,6 +46,8 @@ class StockAlertEngine:
         self.storage = ParquetStorage()
         self._goldminer: Optional[GoldMinerFetcher] = None
         self._stock_info_df: Optional[pd.DataFrame] = None
+        # 分钟线数据缓存，用于批量获取后复用，避免重复网络请求
+        self._intraday_cache: Dict[str, pd.DataFrame] = {}
 
         paths = config.get_data_paths()
         base_metadata = Path(paths.get("metadata_path", "./data/metadata"))
@@ -307,6 +309,71 @@ class StockAlertEngine:
     # 预警规则计算与状态管理
     # ------------------------------------------------------------------
 
+    def _prefetch_intraday_data(self, symbols: List[str], date_str: str) -> None:
+        """批量预获取所有股票的分钟线数据，存入缓存。
+        
+        这样后续 _build_today_bar_from_intraday 可以直接从缓存读取，
+        避免每只股票单独发起网络请求。
+        """
+        if not symbols:
+            return
+
+        try:
+            from gm.api import history, ADJUST_NONE
+        except Exception as e:
+            logger.error(f"导入掘金API失败(批量分钟线): {e}")
+            return
+
+        start_time = f"{date_str} 09:00:00"
+        end_time = f"{date_str} 15:30:00"
+
+        try:
+            logger.info(f"批量获取 {len(symbols)} 只股票的分钟线数据...")
+            # 掘金 history API 支持 list 格式的 symbol 参数
+            df = history(
+                symbol=symbols,
+                frequency="60s",
+                start_time=start_time,
+                end_time=end_time,
+                fields="symbol,open,close,high,low,volume,eob",
+                adjust=ADJUST_NONE,
+                df=True,
+            )
+        except Exception as e:
+            logger.error(f"批量获取分钟线异常: {e}")
+            return
+
+        # 掘金API在连接失败时可能返回dict而非DataFrame
+        if isinstance(df, dict):
+            status = df.get("status", "unknown")
+            message = df.get("message", "未知错误")
+            logger.error(f"批量获取分钟线失败: status={status}, message={message}")
+            return
+
+        if df is None or len(df) == 0:
+            logger.warning("批量获取分钟线: 无数据返回")
+            return
+
+        if "symbol" not in df.columns or "eob" not in df.columns:
+            logger.warning("批量获取分钟线: 返回数据缺少必要列")
+            return
+
+        # 按 symbol 分组存入缓存
+        df = df.copy()
+        df["date"] = pd.to_datetime(df["eob"]).dt.strftime("%Y-%m-%d")
+        df = df[df["date"] == date_str]
+
+        for symbol in symbols:
+            symbol_df = df[df["symbol"] == symbol]
+            if not symbol_df.empty:
+                self._intraday_cache[symbol] = symbol_df
+
+        logger.info(f"分钟线数据缓存完成，共 {len(self._intraday_cache)} 只股票有数据")
+
+    def _clear_intraday_cache(self) -> None:
+        """清空分钟线数据缓存。"""
+        self._intraday_cache.clear()
+
     def _get_daily_bars_with_today(self, symbol: str, max_days: int = 120) -> Optional[pd.DataFrame]:
         """获取包含当日模拟bar在内的日线数据。
 
@@ -343,52 +410,58 @@ class StockAlertEngine:
         return df2
 
     def _build_today_bar_from_intraday(self, symbol: str, date_str: str) -> Optional[Dict[str, Any]]:
-        """使用掘金 history("60s") 分钟线合成当日日bar，并线性外推全天成交量。
+        """使用分钟线合成当日日bar，并线性外推全天成交量。
 
-        若掘金不可用或无数据，返回 None（上层逻辑自动退化为仅使用前一交易日数据）。
+        优先从缓存读取（由 _prefetch_intraday_data 批量获取），
+        若缓存无数据则单独获取（兼容旧逻辑）。
         """
+        # 优先从缓存读取（静默，不打印日志）
+        df = self._intraday_cache.get(symbol)
 
-        try:
-            from gm.api import history, ADJUST_NONE
-        except Exception as e:  # pragma: no cover - 环境无掘金时退化
-            logger.error(f"导入掘金API失败(分钟线): {e}")
+        # 缓存无数据，回退到单独获取
+        if df is None or df.empty:
+            try:
+                from gm.api import history, ADJUST_NONE
+            except Exception as e:
+                logger.error(f"导入掘金API失败(分钟线): {e}")
+                return None
+
+            start_time = f"{date_str} 09:00:00"
+            end_time = f"{date_str} 15:30:00"
+
+            try:
+                df = history(
+                    symbol=symbol,
+                    frequency="60s",
+                    start_time=start_time,
+                    end_time=end_time,
+                    fields="open,close,high,low,volume,eob",
+                    adjust=ADJUST_NONE,
+                    df=True,
+                )
+            except Exception as e:
+                logger.error(f"获取{symbol}分钟线异常: {e}")
+                return None
+
+            # 掘金API在连接失败时可能返回dict而非DataFrame
+            if isinstance(df, dict):
+                status = df.get("status", "unknown")
+                message = df.get("message", "未知错误")
+                func = df.get("function", "unknown")
+                logger.error(f"获取{symbol}分钟线失败: status={status}, message={message}, function={func}")
+                return None
+
+            if df is None or len(df) == 0:
+                return None
+
+            df = df.copy()
+            df["date"] = pd.to_datetime(df["eob"]).dt.strftime("%Y-%m-%d")
+            df = df[df["date"] == date_str]
+
+        # 从这里开始，df 可能来自缓存或单独获取
+        if df is None or df.empty:
             return None
-
-        start_time = f"{date_str} 09:00:00"
-        end_time = f"{date_str} 15:30:00"
-
-        try:
-            df = history(
-                symbol=symbol,
-                frequency="60s",
-                start_time=start_time,
-                end_time=end_time,
-                fields="open,close,high,low,volume,eob",
-                adjust=ADJUST_NONE,
-                df=True,
-            )
-        except Exception as e:  # pragma: no cover - 防御性日志
-            logger.error(f"获取{symbol}分钟线异常: {e}")
-            return None
-
-        # 掘金API在连接失败时可能返回dict而非DataFrame
-        if isinstance(df, dict):
-            status = df.get("status", "unknown")
-            message = df.get("message", "未知错误")
-            func = df.get("function", "unknown")
-            logger.error(f"获取{symbol}分钟线失败: status={status}, message={message}, function={func}")
-            return None
-
-        if df is None or len(df) == 0:
-            logger.debug(f"获取{symbol}分钟线: 无数据返回")
-            return None
-        if "eob" not in df.columns or "open" not in df.columns or "close" not in df.columns:
-            return None
-
-        df = df.copy()
-        df["date"] = pd.to_datetime(df["eob"]).dt.strftime("%Y-%m-%d")
-        df = df[df["date"] == date_str]
-        if df.empty or "volume" not in df.columns:
+        if "open" not in df.columns or "close" not in df.columns or "volume" not in df.columns:
             return None
 
         vol_so_far = float(df["volume"].sum())
@@ -628,6 +701,10 @@ class StockAlertEngine:
         
         logger.info("预警检测开始: 女星股 {} 只, 金店股 {} 只, 共 {} 只待检测, 今日={}",
                     len(cfg["nuxing"]), len(cfg["jindian"]), len(all_symbols), today_str)
+
+        # 批量预获取所有股票的分钟线数据，避免逐只股票单独请求
+        self._clear_intraday_cache()
+        self._prefetch_intraday_data(all_symbols, today_str)
 
         state = self._load_state()
         alerts: Dict[str, Any] = state.get("alerts", {})

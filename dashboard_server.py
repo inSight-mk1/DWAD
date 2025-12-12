@@ -133,6 +133,55 @@ def _sector_snapshot_cache_path() -> Path:
     return ROOT_DIR / "reports" / "sector_ranking_snapshot.json"
 
 
+def _ranking_data_cache_path() -> Path:
+    """返回多周期排名数据缓存文件路径。"""
+
+    return ROOT_DIR / "reports" / "ranking_data_cache.json"
+
+
+class _DateTimeEncoder(json.JSONEncoder):
+    """JSON 编码器，支持 datetime 对象序列化。"""
+
+    def default(self, obj):
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        return super().default(obj)
+
+
+def _save_ranking_data_cache(data: Dict[str, Any]) -> None:
+    """将多周期排名数据保存到缓存文件（失败时仅记录日志，不抛异常）。"""
+
+    try:
+        reports_dir = ROOT_DIR / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = _ranking_data_cache_path()
+        with cache_path.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, cls=_DateTimeEncoder)
+        logger.info("多周期排名数据已写入缓存: {}", cache_path)
+    except Exception:
+        logger.exception("写入多周期排名数据缓存失败")
+
+
+def _load_ranking_data_cache() -> Dict[str, Any]:
+    """从缓存文件读取多周期排名数据，失败时返回空字典。
+    
+    读取缓存时静默操作，不打印日志。
+    """
+    cache_path = _ranking_data_cache_path()
+    if not cache_path.exists():
+        return {}
+
+    try:
+        with cache_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    return {}
+
+
 def _save_sector_ranking_cache(data: List[Dict[str, Any]]) -> None:
     """将板块排名快照保存到缓存文件（失败时仅记录日志，不抛异常）。"""
 
@@ -229,6 +278,12 @@ def rebuild_multi_period_page(enable_realtime: bool = True) -> bool:
     except Exception:
         # 这里记录错误但不影响整体更新流程
         logger.exception("刷新板块排名快照缓存时发生异常")
+
+    # 5. 保存多周期排名数据缓存（供 /api/ranking_data 直接读取，避免重复计算）
+    try:
+        _save_ranking_data_cache(ranking_data)
+    except Exception:
+        logger.exception("保存多周期排名数据缓存时发生异常")
 
     return True
 
@@ -598,14 +653,161 @@ def api_update_ranking():  # type: ignore[override]
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _build_ranking_traces(ranking_data: Dict[str, Any]) -> Dict[str, Any]:
+    """将排名数据转换为前端需要的 traces 格式。
+
+    Args:
+        ranking_data: 由 IndexComparator.get_ranking_data_for_visualization() 生成的数据
+
+    Returns:
+        包含 periods、total_indices、realtime_timestamp 的字典
+    """
+    from dwad.visualization.ranking_visualizer import RankingVisualizer
+    visualizer = RankingVisualizer()
+
+    all_periods_data = []
+    realtime_timestamp = None
+
+    for period_data in ranking_data["periods"]:
+        traces = []
+        series_list = period_data["series"]
+        period = period_data["period"]
+
+        first_series = series_list[0]
+        dates = first_series["dates"][1:] if len(first_series["dates"]) > 1 else first_series["dates"]
+
+        for idx, series in enumerate(series_list):
+            color = visualizer.colors[idx % len(visualizer.colors)]
+            series_dates = series["dates"][1:] if len(series["dates"]) > 1 else series["dates"]
+            ranks = series["ranks"][1:] if len(series["ranks"]) > 1 else series["ranks"]
+            changes = series["changes"][1:] if len(series["changes"]) > 1 else series["changes"]
+            index_values = series["index_values"][1:] if len(series["index_values"]) > 1 else series["index_values"]
+            base_values = series["base_values"][1:] if len(series["base_values"]) > 1 else series["base_values"]
+            base_dates = series["base_dates"][1:] if len(series["base_dates"]) > 1 else series["base_dates"]
+
+            x_values = list(range(len(ranks)))
+
+            customdata = []
+            for date, change, idx_val, base_date, base_val in zip(series_dates, changes, index_values, base_dates, base_values):
+                customdata.append([date, change, idx_val, base_date, base_val])
+
+            trace = {
+                "x": x_values,
+                "y": ranks,
+                "name": series["name"],
+                "type": "scatter",
+                "mode": "lines",
+                "line": {"width": 2, "color": color},
+                "legendgroup": series["name"],
+                "customdata": customdata,
+                "hovertemplate": f"<b>{series['name']}</b><br>" +
+                                "%{customdata[0]}: %{customdata[2]:.2f}<br>" +
+                                "%{customdata[3]}: %{customdata[4]:.2f}<br>" +
+                                "排名: %{y}<br>" +
+                                f"近{period}日涨跌幅: %{{customdata[1]:.2f}}%<br>" +
+                                "<extra></extra>"
+            }
+            traces.append(trace)
+
+        # 添加实时数据
+        realtime_data = period_data.get("realtime")
+        period_dates = dates[:]
+        if realtime_data:
+            realtime_rankings = realtime_data.get("rankings", {})
+            realtime_timestamp = realtime_data.get("timestamp")
+
+            if realtime_rankings:
+                for idx, series in enumerate(series_list):
+                    name = series["name"]
+                    if name in realtime_rankings:
+                        color = visualizer.colors[idx % len(visualizer.colors)]
+                        last_x = len(series["ranks"][1:]) - 1 if len(series["ranks"]) > 1 else 0
+                        last_rank = series["ranks"][-1]
+
+                        rt_info = realtime_rankings[name]
+                        realtime_rank = rt_info["rank"]
+                        realtime_change = rt_info["change_pct"]
+                        # 当日实时涨幅（相对于昨日收盘）
+                        realtime_today_change = rt_info.get("today_change_pct")
+                        realtime_index = rt_info["index_value"]
+                        base_value = rt_info["base_value"]
+                        base_date = rt_info["base_date"]
+
+                        # 实时连接线（添加 is_realtime 和 realtime_today_change 供前端使用）
+                        realtime_trace = {
+                            "x": [last_x, last_x + 1],
+                            "y": [last_rank, realtime_rank],
+                            "name": name,
+                            "type": "scatter",
+                            "mode": "lines",
+                            "line": {"width": 1, "color": color},
+                            "showlegend": False,
+                            "legendgroup": name,
+                            "hoverinfo": "skip",
+                            "is_realtime": True,
+                            "realtime_change": realtime_change,
+                            "realtime_today_change": realtime_today_change,
+                        }
+                        traces.append(realtime_trace)
+
+                        # 实时数据点
+                        marker_trace = {
+                            "x": [last_x + 1],
+                            "y": [realtime_rank],
+                            "name": name,
+                            "type": "scatter",
+                            "mode": "markers",
+                            "marker": {"size": 8, "color": color, "symbol": "circle"},
+                            "showlegend": False,
+                            "legendgroup": name,
+                            "customdata": [[
+                                str(realtime_timestamp)[:10] if realtime_timestamp else "实时",
+                                realtime_change,
+                                realtime_index,
+                                base_date,
+                                base_value
+                            ]],
+                            "hovertemplate": f"<b>{name} (实时)</b><br>" +
+                                            "%{customdata[0]}: %{customdata[2]:.2f}<br>" +
+                                            "%{customdata[3]}: %{customdata[4]:.2f}<br>" +
+                                            "排名: %{y}<br>" +
+                                            f"近{period}日涨跌幅: %{{customdata[1]:.2f}}%<br>" +
+                                            "<extra></extra>"
+                        }
+                        traces.append(marker_trace)
+
+                period_dates = period_dates + ["实时"]
+
+        all_periods_data.append({
+            "period": period,
+            "title": period_data["title"],
+            "traces": traces,
+            "dates": period_dates
+        })
+
+    return {
+        "periods": all_periods_data,
+        "total_indices": ranking_data["total_indices"],
+        "realtime_timestamp": str(realtime_timestamp) if realtime_timestamp else None
+    }
+
+
 @app.get("/api/ranking_data")
 def api_ranking_data():  # type: ignore[override]
     """返回多周期排名图表数据（JSON格式）。
 
     该接口用于前端动态加载图表数据，无需刷新页面即可更新图表。
-    返回的数据结构与 RankingVisualizer 生成 HTML 时使用的格式一致。
+    优先读取 /api/update_ranking 生成的缓存数据，避免重复计算和获取实时数据。
     """
     try:
+        # 优先读取缓存（静默读取，不打印日志）
+        ranking_data = _load_ranking_data_cache()
+        if ranking_data and "periods" in ranking_data:
+            result = _build_ranking_traces(ranking_data)
+            return jsonify({"ok": True, "data": result})
+
+        # 缓存不存在，回退到重新计算（首次访问或缓存被清除时）
+        logger.warning("多周期排名数据缓存不存在，正在重新计算...")
         comparator = IndexComparator(enable_realtime=True)
 
         if not comparator.load_indices_data():
@@ -623,133 +825,11 @@ def api_ranking_data():  # type: ignore[override]
             logger.error("无法生成多周期排名数据")
             return jsonify({"ok": False, "error": "无法生成排名数据"}), 500
 
-        # 构造前端需要的 traces 数据
-        from dwad.visualization.ranking_visualizer import RankingVisualizer
-        visualizer = RankingVisualizer()
-        
-        all_periods_data = []
-        realtime_timestamp = None
-        
-        for period_data in ranking_data["periods"]:
-            traces = []
-            series_list = period_data["series"]
-            period = period_data["period"]
-            
-            first_series = series_list[0]
-            dates = first_series["dates"][1:] if len(first_series["dates"]) > 1 else first_series["dates"]
-            
-            for idx, series in enumerate(series_list):
-                color = visualizer.colors[idx % len(visualizer.colors)]
-                series_dates = series["dates"][1:] if len(series["dates"]) > 1 else series["dates"]
-                ranks = series["ranks"][1:] if len(series["ranks"]) > 1 else series["ranks"]
-                changes = series["changes"][1:] if len(series["changes"]) > 1 else series["changes"]
-                index_values = series["index_values"][1:] if len(series["index_values"]) > 1 else series["index_values"]
-                base_values = series["base_values"][1:] if len(series["base_values"]) > 1 else series["base_values"]
-                base_dates = series["base_dates"][1:] if len(series["base_dates"]) > 1 else series["base_dates"]
-                
-                x_values = list(range(len(ranks)))
-                
-                customdata = []
-                for date, change, idx_val, base_date, base_val in zip(series_dates, changes, index_values, base_dates, base_values):
-                    customdata.append([date, change, idx_val, base_date, base_val])
-                
-                trace = {
-                    "x": x_values,
-                    "y": ranks,
-                    "name": series["name"],
-                    "type": "scatter",
-                    "mode": "lines",
-                    "line": {"width": 2, "color": color},
-                    "legendgroup": series["name"],
-                    "customdata": customdata,
-                    "hovertemplate": f"<b>{series['name']}</b><br>" +
-                                    "%{customdata[0]}: %{customdata[2]:.2f}<br>" +
-                                    "%{customdata[3]}: %{customdata[4]:.2f}<br>" +
-                                    "排名: %{y}<br>" +
-                                    f"近{period}日涨跌幅: %{{customdata[1]:.2f}}%<br>" +
-                                    "<extra></extra>"
-                }
-                traces.append(trace)
-            
-            # 添加实时数据
-            realtime_data = period_data.get("realtime")
-            period_dates = dates[:]
-            if realtime_data:
-                realtime_rankings = realtime_data.get("rankings", {})
-                realtime_timestamp = realtime_data.get("timestamp")
-                
-                if realtime_rankings:
-                    for idx, series in enumerate(series_list):
-                        name = series["name"]
-                        if name in realtime_rankings:
-                            color = visualizer.colors[idx % len(visualizer.colors)]
-                            last_x = len(series["ranks"][1:]) - 1 if len(series["ranks"]) > 1 else 0
-                            last_rank = series["ranks"][-1]
-                            
-                            rt_info = realtime_rankings[name]
-                            realtime_rank = rt_info["rank"]
-                            realtime_change = rt_info["change_pct"]
-                            realtime_index = rt_info["index_value"]
-                            base_value = rt_info["base_value"]
-                            base_date = rt_info["base_date"]
-                            
-                            # 实时连接线
-                            realtime_trace = {
-                                "x": [last_x, last_x + 1],
-                                "y": [last_rank, realtime_rank],
-                                "name": name,
-                                "type": "scatter",
-                                "mode": "lines",
-                                "line": {"width": 1, "color": color},
-                                "showlegend": False,
-                                "legendgroup": name,
-                                "hoverinfo": "skip",
-                            }
-                            traces.append(realtime_trace)
-                            
-                            # 实时数据点
-                            marker_trace = {
-                                "x": [last_x + 1],
-                                "y": [realtime_rank],
-                                "name": name,
-                                "type": "scatter",
-                                "mode": "markers",
-                                "marker": {"size": 8, "color": color, "symbol": "circle"},
-                                "showlegend": False,
-                                "legendgroup": name,
-                                "customdata": [[
-                                    str(realtime_timestamp)[:10] if realtime_timestamp else "实时",
-                                    realtime_change,
-                                    realtime_index,
-                                    base_date,
-                                    base_value
-                                ]],
-                                "hovertemplate": f"<b>{name} (实时)</b><br>" +
-                                                "%{customdata[0]}: %{customdata[2]:.2f}<br>" +
-                                                "%{customdata[3]}: %{customdata[4]:.2f}<br>" +
-                                                "排名: %{y}<br>" +
-                                                f"近{period}日涨跌幅: %{{customdata[1]:.2f}}%<br>" +
-                                                "<extra></extra>"
-                            }
-                            traces.append(marker_trace)
-                    
-                    period_dates = period_dates + ["实时"]
-            
-            all_periods_data.append({
-                "period": period,
-                "title": period_data["title"],
-                "traces": traces,
-                "dates": period_dates
-            })
-        
-        return jsonify({
-            "ok": True,
-            "data": {
-                "periods": all_periods_data,
-                "total_indices": ranking_data["total_indices"],
-                "realtime_timestamp": str(realtime_timestamp) if realtime_timestamp else None
-            }
-        })
+        # 保存到缓存供下次使用
+        _save_ranking_data_cache(ranking_data)
+
+        result = _build_ranking_traces(ranking_data)
+        return jsonify({"ok": True, "data": result})
     except Exception as e:
         logger.exception("获取排名数据失败")
         return jsonify({"ok": False, "error": str(e)}), 500
