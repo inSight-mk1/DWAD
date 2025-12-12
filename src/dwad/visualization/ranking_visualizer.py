@@ -1257,12 +1257,19 @@ class RankingVisualizer:
                 <div id="auto-update-settings" style="display:none;align-items:center;gap:6px;">
                     <span>频率(分钟):</span>
                     <input id="auto-update-interval" type="number" min="1" value="5" style="width:60px;padding:2px 4px;font-size:12px;border:1px solid #ced4da;border-radius:4px;">
+                    <span>预警频率:</span>
+                    <span>每</span>
+                    <input id="alert-frequency" type="number" min="1" value="1" style="width:50px;padding:2px 4px;font-size:12px;border:1px solid #ced4da;border-radius:4px;">
+                    <span>次更新</span>
                     <span>时间范围:</span>
                     <input id="auto-update-start" type="time" step="1" value="09:25:00" style="padding:2px 4px;font-size:12px;border:1px solid #ced4da;border-radius:4px;">
                     <span>至</span>
                     <input id="auto-update-end" type="time" step="1" value="15:00:00" style="padding:2px 4px;font-size:12px;border:1px solid #ced4da;border-radius:4px;">
                     <span id="auto-update-countdown" style="margin-left:8px;color:#0d6efd;"></span>
                 </div>
+            </div>
+            <div id="alert-status-line" style="font-size:12px;color:#6c757d;margin-top:4px;display:none;">
+                <span id="alert-status-text"></span>
             </div>
         </div>
         
@@ -1515,20 +1522,6 @@ class RankingVisualizer:
                         setTaskStatus(taskName + '已完成：' + completedTime);
                     }} else if (isUpdate) {{
                         const statusMsg = taskName + '已完成：' + completedTime;
-                        setTaskStatus(statusMsg + '，正在执行预警检测...');
-                        // 更新排名完成后自动执行预警检测
-                        try {{
-                            const alertResp = await fetch('/api/stock_alerts/run_detection', {{ method: 'POST' }});
-                            const alertData = await alertResp.json().catch(() => null);
-                            if (alertData && alertData.ok) {{
-                                setTaskStatus(statusMsg + '，预警检测完成，正在刷新图表...');
-                            }} else {{
-                                setTaskStatus(statusMsg + '，预警检测失败，正在刷新图表...');
-                            }}
-                        }} catch (e) {{
-                            console.error('预警检测失败', e);
-                            setTaskStatus(statusMsg + '，预警检测出错，正在刷新图表...');
-                        }}
                         // 动态刷新图表数据，不刷新页面
                         try {{
                             await refreshChartsData();
@@ -1536,6 +1529,10 @@ class RankingVisualizer:
                         }} catch (refreshErr) {{
                             console.error('刷新图表数据失败', refreshErr);
                             setTaskStatus(statusMsg + '，图表刷新失败，请手动刷新页面');
+                        }}
+                        // 检查是否需要执行预警检测（根据频率配置）
+                        if (shouldRunAlertDetection()) {{
+                            triggerAsyncAlertDetection();
                         }}
                         return;
                     }}
@@ -1551,6 +1548,97 @@ class RankingVisualizer:
                 if (!isAutoTriggered) {{
                     resumeAutoUpdate();
                 }}
+            }}
+        }}
+
+        // 预警检测频率控制
+        let alertUpdateCounter = 0;  // 更新排名计数器
+        const ALERT_CONFIG_KEY = 'dwad_alert_frequency';
+        let alertPollingTimer = null;
+
+        function getAlertFrequency() {{
+            const input = document.getElementById('alert-frequency');
+            return input ? parseInt(input.value, 10) || 1 : 1;
+        }}
+
+        function shouldRunAlertDetection() {{
+            alertUpdateCounter++;
+            const freq = getAlertFrequency();
+            if (alertUpdateCounter >= freq) {{
+                alertUpdateCounter = 0;
+                return true;
+            }}
+            return false;
+        }}
+
+        function updateAlertStatusDisplay(status, completedAt, error) {{
+            const line = document.getElementById('alert-status-line');
+            const text = document.getElementById('alert-status-text');
+            if (!line || !text) return;
+
+            let msg = '';
+            let color = '#6c757d';
+            if (status === 'fetching') {{
+                msg = '预警计算状态：正在获取分钟线数据...';
+                color = '#0d6efd';
+            }} else if (status === 'calculating') {{
+                msg = '预警计算状态：正在计算预警...';
+                color = '#0d6efd';
+            }} else if (status === 'completed' && completedAt) {{
+                msg = '预警计算状态：已完成 ' + completedAt;
+                color = '#28a745';
+            }} else if (status === 'error') {{
+                msg = '预警计算状态：出错 - ' + (error || '未知错误');
+                color = '#dc3545';
+            }} else if (status === 'idle') {{
+                line.style.display = 'none';
+                return;
+            }}
+
+            text.textContent = msg;
+            text.style.color = color;
+            line.style.display = 'block';
+        }}
+
+        async function pollAlertDetectionStatus() {{
+            try {{
+                const resp = await fetch('/api/stock_alerts/detection_status');
+                const result = await resp.json();
+                if (result.ok && result.data) {{
+                    const {{ status, completed_at, error }} = result.data;
+                    updateAlertStatusDisplay(status, completed_at, error);
+                    
+                    // 如果还在运行中，继续轮询
+                    if (status === 'fetching' || status === 'calculating') {{
+                        alertPollingTimer = setTimeout(pollAlertDetectionStatus, 1000);
+                    }} else {{
+                        // 完成或出错，停止轮询
+                        alertPollingTimer = null;
+                    }}
+                }}
+            }} catch (e) {{
+                console.error('轮询预警检测状态失败', e);
+                alertPollingTimer = null;
+            }}
+        }}
+
+        async function triggerAsyncAlertDetection() {{
+            try {{
+                updateAlertStatusDisplay('fetching', null, null);
+                const resp = await fetch('/api/stock_alerts/run_detection', {{ method: 'POST' }});
+                const data = await resp.json();
+                if (data && data.ok) {{
+                    // 开始轮询状态
+                    if (alertPollingTimer) {{
+                        clearTimeout(alertPollingTimer);
+                    }}
+                    alertPollingTimer = setTimeout(pollAlertDetectionStatus, 500);
+                }} else {{
+                    updateAlertStatusDisplay('error', null, data.error || '触发失败');
+                }}
+            }} catch (e) {{
+                console.error('触发预警检测失败', e);
+                updateAlertStatusDisplay('error', null, e.message);
             }}
         }}
 
@@ -3297,7 +3385,8 @@ class RankingVisualizer:
                 enabled: true,
                 intervalMinutes: intervalMinutes,
                 startTime: startInput.value,
-                endTime: endInput.value
+                endTime: endInput.value,
+                alertFrequency: getAlertFrequency()
             }});
         }}
 
@@ -3307,6 +3396,7 @@ class RankingVisualizer:
             const intervalInput = document.getElementById('auto-update-interval');
             const startInput = document.getElementById('auto-update-start');
             const endInput = document.getElementById('auto-update-end');
+            const alertFreqInput = document.getElementById('alert-frequency');
             if (!toggle || !settings || !intervalInput || !startInput || !endInput) {{
                 return;
             }}
@@ -3322,12 +3412,18 @@ class RankingVisualizer:
                 if (cfg.endTime) {{
                     endInput.value = cfg.endTime;
                 }}
+                if (typeof cfg.alertFrequency === 'number' && cfg.alertFrequency > 0 && alertFreqInput) {{
+                    alertFreqInput.value = cfg.alertFrequency;
+                }}
                 if (cfg.enabled) {{
                     toggle.checked = true;
                     settings.style.display = 'flex';
                     scheduleNextAutoUpdate();
                 }}
             }}
+
+            // 页面加载时检查并显示上次预警检测状态
+            pollAlertDetectionStatus();
 
             toggle.addEventListener('change', () => {{
                 if (toggle.checked) {{
@@ -3342,12 +3438,15 @@ class RankingVisualizer:
                         enabled: false,
                         intervalMinutes: Number(intervalInput.value) || 0,
                         startTime: startInput.value,
-                        endTime: endInput.value
+                        endTime: endInput.value,
+                        alertFrequency: getAlertFrequency()
                     }});
                 }}
             }});
 
-            [intervalInput, startInput, endInput].forEach((el) => {{
+            const inputsToWatch = [intervalInput, startInput, endInput];
+            if (alertFreqInput) inputsToWatch.push(alertFreqInput);
+            inputsToWatch.forEach((el) => {{
                 el.addEventListener('change', () => {{
                     if (toggle.checked) {{
                         scheduleNextAutoUpdate();

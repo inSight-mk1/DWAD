@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 import sys
+import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -21,6 +23,7 @@ import pandas as pd
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, Response, jsonify, request
 from loguru import logger
+from werkzeug.serving import WSGIRequestHandler
 
 # 计算项目根目录和源码目录
 ROOT_DIR = Path(__file__).resolve().parent
@@ -47,6 +50,17 @@ _alert_engine: StockAlertEngine | None = None
 _scheduler: BackgroundScheduler | None = None
 _ALERT_DETECTION_JOB_ID = "stock_alert_detection"
 
+# 异步预警检测状态管理
+_alert_detection_lock = threading.Lock()
+_alert_detection_state: Dict[str, Any] = {
+    "status": "idle",  # idle, fetching, calculating, completed, error
+    "started_at": None,
+    "completed_at": None,
+    "error": None,
+}
+# 预警检测频率控制：每 x 次更新排名执行 1 次预警检测
+_ranking_update_count = 0
+
 
 def get_alert_engine() -> StockAlertEngine:
     """惰性初始化并返回全局个股预警引擎。"""
@@ -65,6 +79,17 @@ def init_logger() -> None:
     """
     setup_logger()
     logger.info("DWAD Flask 仪表盘服务启动")
+
+
+class BeijingRequestHandler(WSGIRequestHandler):
+    def log_date_time_string(self) -> str:  # pragma: no cover
+        try:
+            from dwad.utils.timezone import now_beijing
+
+            dt = now_beijing()
+        except Exception:
+            dt = datetime.now()
+        return dt.strftime("%d/%b/%Y %H:%M:%S")
 
 
 def init_stock_alert_scheduler() -> None:
@@ -1096,17 +1121,95 @@ def api_stock_alerts_ack():  # type: ignore[override]
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-@app.post("/api/stock_alerts/run_detection")
-def api_stock_alerts_run_detection():  # type: ignore[override]
-    """手动触发一次预警检测（不受交易时间窗口限制）。"""
+def _run_alert_detection_async() -> None:
+    """在后台线程中执行预警检测，更新全局状态。"""
+    global _alert_detection_state
+
+    try:
+        from dwad.utils.timezone import now_beijing
+        now_str = now_beijing().strftime("%Y/%m/%d %H:%M:%S")
+    except Exception:
+        now_str = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+
+    with _alert_detection_lock:
+        _alert_detection_state["status"] = "fetching"
+        _alert_detection_state["started_at"] = now_str
+        _alert_detection_state["completed_at"] = None
+        _alert_detection_state["error"] = None
 
     try:
         engine = get_alert_engine()
-        logger.info("手动触发预警检测")
+        logger.info("异步预警检测开始（后台线程）")
+
+        # 阶段1: 获取分钟线数据
+        with _alert_detection_lock:
+            _alert_detection_state["status"] = "fetching"
+
+        # 阶段2: 计算预警
+        with _alert_detection_lock:
+            _alert_detection_state["status"] = "calculating"
+
+        # 执行检测（内部会先获取数据再计算）
         engine.run_detection_cycle()
-        return jsonify({"ok": True, "message": "检测完成"})
+
+        try:
+            from dwad.utils.timezone import now_beijing
+            completed_str = now_beijing().strftime("%Y/%m/%d %H:%M:%S")
+        except Exception:
+            completed_str = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+
+        with _alert_detection_lock:
+            _alert_detection_state["status"] = "completed"
+            _alert_detection_state["completed_at"] = completed_str
+        logger.info("异步预警检测完成")
+
+    except Exception as e:
+        logger.exception("异步预警检测失败")
+        with _alert_detection_lock:
+            _alert_detection_state["status"] = "error"
+            _alert_detection_state["error"] = str(e)
+
+
+def start_alert_detection_thread() -> bool:
+    """启动异步预警检测线程。如果已有检测在运行，则返回 False。"""
+    global _alert_detection_state
+
+    with _alert_detection_lock:
+        if _alert_detection_state["status"] in ("fetching", "calculating"):
+            logger.info("预警检测已在运行中，跳过本次触发")
+            return False
+
+    thread = threading.Thread(target=_run_alert_detection_async, daemon=True)
+    thread.start()
+    return True
+
+
+@app.post("/api/stock_alerts/run_detection")
+def api_stock_alerts_run_detection():  # type: ignore[override]
+    """手动触发一次预警检测（异步执行，不阻塞主线程）。"""
+
+    try:
+        logger.info("手动触发预警检测（异步）")
+        started = start_alert_detection_thread()
+        if started:
+            return jsonify({"ok": True, "message": "检测已启动"})
+        else:
+            return jsonify({"ok": True, "message": "检测已在运行中"})
     except Exception as e:  # pragma: no cover
         logger.exception("手动触发预警检测失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.get("/api/stock_alerts/detection_status")
+def api_stock_alerts_detection_status():  # type: ignore[override]
+    """获取异步预警检测的当前状态。"""
+
+    try:
+        with _alert_detection_lock:
+            state = _alert_detection_state.copy()
+        return jsonify({"ok": True, "data": state})
+    except Exception as e:  # pragma: no cover
+        logger.exception("获取预警检测状态失败")
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
@@ -1199,7 +1302,7 @@ def main() -> None:
     # 初始化个股预警相关调度任务
     init_stock_alert_scheduler()
 
-    app.run(host="0.0.0.0", port=8818, debug=False)
+    app.run(host="0.0.0.0", port=8818, debug=False, request_handler=BeijingRequestHandler)
 
 
 if __name__ == "__main__":

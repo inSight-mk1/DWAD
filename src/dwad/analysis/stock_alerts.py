@@ -14,6 +14,9 @@ from __future__ import annotations
 """
 
 import json
+import os
+import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -57,6 +60,9 @@ class StockAlertEngine:
         self.state_file = base_metadata / "stock_alerts_state.json"
         self.config_file = base_metadata / "stock_alerts_config.json"  # 独立配置文件
 
+        self._state_lock = threading.Lock()
+        self._config_lock = threading.Lock()
+
     # ------------------------------------------------------------------
     # 配置与自选列表
     # ------------------------------------------------------------------
@@ -95,10 +101,25 @@ class StockAlertEngine:
     def _save_config(self, cfg: Dict[str, Any]) -> None:
         """保存预警配置 JSON。"""
         try:
-            tmp_path = self.config_file.with_suffix(".tmp")
-            with tmp_path.open("w", encoding="utf-8") as f:
-                json.dump(cfg, f, ensure_ascii=False, indent=2)
-            tmp_path.replace(self.config_file)
+            self.config_file.parent.mkdir(parents=True, exist_ok=True)
+            with self._config_lock:
+                fd, tmp_name = tempfile.mkstemp(
+                    prefix=f"{self.config_file.stem}.",
+                    suffix=".tmp",
+                    dir=str(self.config_file.parent),
+                )
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(cfg, f, ensure_ascii=False, indent=2)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(tmp_name, self.config_file)
+                finally:
+                    if os.path.exists(tmp_name):
+                        try:
+                            os.remove(tmp_name)
+                        except Exception:
+                            pass
         except Exception as e:
             logger.error(f"保存预警配置文件失败: {e}")
 
@@ -137,10 +158,25 @@ class StockAlertEngine:
     def _save_state(self, state: Dict[str, Any]) -> None:
         """保存预警状态 JSON。"""
         try:
-            tmp_path = self.state_file.with_suffix(".tmp")
-            with tmp_path.open("w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
-            tmp_path.replace(self.state_file)
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            with self._state_lock:
+                fd, tmp_name = tempfile.mkstemp(
+                    prefix=f"{self.state_file.stem}.",
+                    suffix=".tmp",
+                    dir=str(self.state_file.parent),
+                )
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(state, f, ensure_ascii=False, indent=2)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(tmp_name, self.state_file)
+                finally:
+                    if os.path.exists(tmp_name):
+                        try:
+                            os.remove(tmp_name)
+                        except Exception:
+                            pass
         except Exception as e:
             logger.error(f"保存预警状态文件失败: {e}")
 
