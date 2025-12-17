@@ -924,7 +924,7 @@ class RankingVisualizer:
             chart_id = f"chart-{idx}"
             period = period_data['period']
             title = period_data['title']
-            traces_json = json.dumps(period_data['traces'], ensure_ascii=False, indent=2)
+            traces_json = json.dumps(period_data['traces'], ensure_ascii=False)
             dates_json = json.dumps(period_data['dates'], ensure_ascii=False)  # 添加日期列表
             
             # 添加图表容器
@@ -943,14 +943,14 @@ class RankingVisualizer:
             # 使用JSON编码title以避免JavaScript字符串转义问题
             title_json = json.dumps(title, ensure_ascii=False)
             charts_script += f'''
-        // 渲染图表 {idx + 1}: {title}
-        renderSingleChart(
-            '{chart_id}',
-            {traces_json},
-            {dates_json},
-            {title_json},
-            {total_indices}
-        );
+            // 渲染图表 {idx + 1}: {title}
+            renderSingleChart(
+                '{chart_id}',
+                {traces_json},
+                {dates_json},
+                {title_json},
+                {total_indices}
+            );
 '''
         
         html_template = f'''<!DOCTYPE html>
@@ -1332,7 +1332,9 @@ class RankingVisualizer:
                             <th data-col="name">名称</th>
                             <th data-col="index_value">当前价格</th>
                             <th data-col="daily_pct">当日涨幅</th>
+                            <th data-col="r10">近10日</th>
                             <th data-col="r20">近20日</th>
+                            <th data-col="r30">近30日</th>
                             <th data-col="r55">近55日</th>
                             <th data-col="r233">近233日</th>
                             <th data-col="since_start">自起点以来</th>
@@ -1809,6 +1811,24 @@ class RankingVisualizer:
             }}
         }}
 
+        function updateStockPeriodHeaders(data) {{
+            if (!data || !data.length) return;
+            const firstRow = data[0];
+            const periodCols = ['r10', 'r20', 'r30', 'r55', 'r233'];
+            const periodLabels = {{'r10': '近10日', 'r20': '近20日', 'r30': '近30日', 'r55': '近55日', 'r233': '近233日'}};
+            periodCols.forEach(col => {{
+                const th = document.querySelector(`#stock-ranking-table th[data-col="${{col}}"]`);
+                if (!th) return;
+                const dateKey = col + '_date';
+                const dateVal = firstRow[dateKey];
+                if (dateVal) {{
+                    th.textContent = `${{periodLabels[col]}}(${{dateVal}})`;
+                }} else {{
+                    th.textContent = periodLabels[col];
+                }}
+            }});
+        }}
+
         function formatPct(v) {{
             if (v === null || v === undefined) return '--';
             const num = Number(v);
@@ -1940,9 +1960,17 @@ class RankingVisualizer:
                 tdDaily.textContent = formatPct(row.daily_pct);
                 tr.appendChild(tdDaily);
 
+                const td10 = document.createElement('td');
+                td10.textContent = formatPct(row.r10);
+                tr.appendChild(td10);
+
                 const td20 = document.createElement('td');
                 td20.textContent = formatPct(row.r20);
                 tr.appendChild(td20);
+
+                const td30 = document.createElement('td');
+                td30.textContent = formatPct(row.r30);
+                tr.appendChild(td30);
 
                 const td55 = document.createElement('td');
                 td55.textContent = formatPct(row.r55);
@@ -2016,6 +2044,7 @@ class RankingVisualizer:
                 stockSortAsc = false;
                 sortStockData(stockSortCol, stockSortAsc);
                 renderStockTable();
+                updateStockPeriodHeaders(data);
             }} catch (err) {{
                 console.error('调用个股排名接口失败', err);
                 alert('获取个股排名失败，请稍后重试');
@@ -2220,9 +2249,26 @@ class RankingVisualizer:
                 const tdMetrics = document.createElement('td');
                 try {{
                     const m = row.metrics || {{}};
-                    if (Object.keys(m).length) {{
-                        // 格式化为易读的多行文本
-                        tdMetrics.innerHTML = Object.entries(m).map(([k, v]) => `<span style="white-space:nowrap;">${{k}}: ${{v}}</span>`).join('<br>');
+                    const rule = row.rule || '';
+                    // 按规则类型定义显示顺序，确保第二行统一为"当前价、今日涨幅"
+                    const orderMap = {{
+                        nuxing: ['当日缩量', '5MA缩量', '当前价', '今日涨幅'],
+                        jindian: ['2日J值', '1日J值', '当前价', '今日涨幅']
+                    }};
+                    const order = orderMap[rule] || Object.keys(m);
+                    const sortedEntries = order.filter(k => m[k] !== undefined).map(k => [k, m[k]]);
+                    if (sortedEntries.length) {{
+                        // 2行2列布局
+                        const row1 = sortedEntries.slice(0, 2).map(([k, v]) => `${{k}}: ${{v}}`);
+                        const row2 = sortedEntries.slice(2, 4).map(([k, v]) => `${{k}}: ${{v}}`);
+                        const gridStyle = 'display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;font-size:12px;';
+                        let html = `<div style="${{gridStyle}}">`;
+                        row1.forEach(item => {{ html += `<span style="white-space:nowrap;">${{item}}</span>`; }});
+                        if (row1.length === 1) html += '<span></span>';  // 填充空缺
+                        row2.forEach(item => {{ html += `<span style="white-space:nowrap;">${{item}}</span>`; }});
+                        if (row2.length === 1) html += '<span></span>';  // 填充空缺
+                        html += '</div>';
+                        tdMetrics.innerHTML = html;
                     }} else {{
                         tdMetrics.textContent = '';
                     }}
@@ -2559,6 +2605,7 @@ class RankingVisualizer:
             const ruleName = ruleMap[alert.rule] || alert.rule;
             const title = `📢 ${{ruleName}}预警: ${{alert.name || alert.symbol}}`;
             const m = alert.metrics || {{}};
+            // 自适应显示所有指标
             const metricsText = Object.entries(m).map(([k, v]) => `${{k}}: ${{v}}`).join(' | ');
             const body = `${{alert.date}}\n${{metricsText}}`;
             try {{
@@ -3190,9 +3237,7 @@ class RankingVisualizer:
                 console.error('Plotly库未加载');
                 return;
             }}
-            
 {charts_script}
-
             // 图表渲染完成后初始化 Tab 和板块排名表格逻辑
             try {{
                 initTabsAndSectorTable();

@@ -117,7 +117,10 @@ def init_stock_alert_scheduler() -> None:
             pass
 
     def _job_wrapper() -> None:
-        """执行预警检测，仅在交易时间窗口内运行。"""
+        """执行预警检测，仅在交易时间窗口内运行。
+        
+        使用 start_alert_detection_thread() 异步执行检测，避免阻塞其他 API 请求。
+        """
         try:
             from src.dwad.utils.timezone import now_beijing
             now = now_beijing()
@@ -134,7 +137,8 @@ def init_stock_alert_scheduler() -> None:
                 return
             
             logger.info("执行定时预警检测 (当前北京时间: {})", now.strftime("%H:%M:%S"))
-            engine.run_detection_cycle()
+            # 使用异步线程执行检测，避免阻塞 APScheduler 线程和其他 API 请求
+            start_alert_detection_thread()
         except Exception:
             logger.exception("执行个股预警检测任务失败")
 
@@ -310,6 +314,43 @@ def rebuild_multi_period_page(enable_realtime: bool = True) -> bool:
     except Exception:
         logger.exception("保存多周期排名数据缓存时发生异常")
 
+    return True
+
+
+def regenerate_html_from_cache() -> bool:
+    """使用缓存数据重新生成 HTML 模板，用于服务启动时应用代码修改。
+    
+    与 rebuild_multi_period_page 不同，此函数不重新计算数据，
+    而是直接使用上次更新排名时保存的缓存数据重新生成 HTML。
+    如果缓存不存在，则回退到完整重建。
+    
+    Returns:
+        bool: 是否成功生成
+    """
+    # 尝试读取缓存数据
+    ranking_data = _load_ranking_data_cache()
+    if not ranking_data or "periods" not in ranking_data:
+        logger.info("未找到有效的排名数据缓存，将执行完整重建")
+        return rebuild_multi_period_page(enable_realtime=False)
+    
+    # 使用缓存数据生成 HTML
+    if "config" not in ranking_data:
+        ranking_data["config"] = {}
+    ranking_data["config"]["output_filename"] = "index_ranking_dashboard.html"
+    
+    visualizer = RankingVisualizer()
+    ok = visualizer.generate_html(ranking_data)
+    if not ok:
+        logger.error("使用缓存数据生成HTML失败，将执行完整重建")
+        return rebuild_multi_period_page(enable_realtime=False)
+    
+    reports_dir = ROOT_DIR / "reports"
+    html_path = reports_dir / "index_ranking_dashboard.html"
+    if not html_path.exists():
+        logger.error("生成的HTML文件不存在: {}", html_path)
+        return False
+    
+    logger.info("已使用缓存数据重新生成HTML模板")
     return True
 
 
@@ -558,19 +599,28 @@ def build_stock_ranking_for_sector(sector_name: str, start_ts=None) -> List[Dict
                 daily_pct = None
 
         def calc_period_return(days: int):
-            # 以当前价格（实时价/最新价）相对于N个交易日前的收盘价计算涨跌幅
-            if len(df) > days:
+            # 近N日涨幅计算逻辑：
+            # - T日（今天/实时）算第1天，往前推 N-1 天，共 N 个交易日
+            # - 近N日涨幅 = 实时价格 / T-N日收盘价 - 1
+            # - df.iloc[-1] 是 T-1 日（最新历史数据）
+            # - T-N 日 = df.iloc[-N]（从 T-1 往前数 N-1 天）
+            # 返回 (涨跌幅, 基准日期)
+            if len(df) >= days:
                 try:
-                    base_val = float(df.iloc[-(days + 1)][price_col])
-                except (TypeError, ValueError):
-                    return None
+                    base_row = df.iloc[-days]
+                    base_val = float(base_row[price_col])
+                    base_date = base_row["date"]
+                except (TypeError, ValueError, KeyError):
+                    return None, None
                 if base_val > 0:
-                    return current_value / base_val - 1.0
-            return None
+                    return current_value / base_val - 1.0, base_date
+            return None, None
 
-        r20 = calc_period_return(20)
-        r55 = calc_period_return(55)
-        r233 = calc_period_return(233)
+        r10, r10_date = calc_period_return(10)
+        r20, r20_date = calc_period_return(20)
+        r30, r30_date = calc_period_return(30)
+        r55, r55_date = calc_period_return(55)
+        r233, r233_date = calc_period_return(233)
 
         # 自起点以来涨幅
         since_start = None
@@ -590,9 +640,16 @@ def build_stock_ranking_for_sector(sector_name: str, start_ts=None) -> List[Dict
                 "name": symbol_to_name.get(symbol, symbol),
                 "index_value": current_value,
                 "daily_pct": daily_pct,
+                "r10": r10,
+                "r10_date": r10_date.strftime("%m.%d") if r10_date is not None else None,
                 "r20": r20,
+                "r20_date": r20_date.strftime("%m.%d") if r20_date is not None else None,
+                "r30": r30,
+                "r30_date": r30_date.strftime("%m.%d") if r30_date is not None else None,
                 "r55": r55,
+                "r55_date": r55_date.strftime("%m.%d") if r55_date is not None else None,
                 "r233": r233,
+                "r233_date": r233_date.strftime("%m.%d") if r233_date is not None else None,
                 "since_start": since_start,
             }
         )
@@ -1150,7 +1207,7 @@ def _run_alert_detection_async() -> None:
             _alert_detection_state["status"] = "calculating"
 
         # 执行检测（内部会先获取数据再计算）
-        engine.run_detection_cycle()
+        success, error_msg = engine.run_detection_cycle()
 
         try:
             from dwad.utils.timezone import now_beijing
@@ -1158,10 +1215,17 @@ def _run_alert_detection_async() -> None:
         except Exception:
             completed_str = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
 
-        with _alert_detection_lock:
-            _alert_detection_state["status"] = "completed"
-            _alert_detection_state["completed_at"] = completed_str
-        logger.info("异步预警检测完成")
+        if success:
+            with _alert_detection_lock:
+                _alert_detection_state["status"] = "completed"
+                _alert_detection_state["completed_at"] = completed_str
+            logger.info("异步预警检测完成")
+        else:
+            with _alert_detection_lock:
+                _alert_detection_state["status"] = "error"
+                _alert_detection_state["completed_at"] = completed_str
+                _alert_detection_state["error"] = error_msg
+            logger.error("异步预警检测失败: {}", error_msg)
 
     except Exception as e:
         logger.exception("异步预警检测失败")
@@ -1298,6 +1362,12 @@ def main() -> None:
     """
     # 先初始化日志系统
     init_logger()
+
+    # 服务启动时重新生成 HTML 模板，确保代码修改立即生效
+    # 优先使用上次更新排名的缓存数据，避免重新计算
+    logger.info("服务启动：正在重新生成 HTML 模板（使用缓存数据）...")
+    regenerate_html_from_cache()
+    logger.info("HTML 模板生成完成")
 
     # 初始化个股预警相关调度任务
     init_stock_alert_scheduler()

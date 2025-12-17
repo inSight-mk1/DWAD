@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from loguru import logger
 
 from ..utils.config import config
+from .goldminer_fetcher import _gm_api_lock
 
 
 @dataclass
@@ -47,14 +48,16 @@ class RealtimePriceFetcher:
             # 导入掘金API
             from gm.api import set_token, set_serv_addr
 
-            # 设置终端服务地址（Linux环境需要指向Windows终端）
-            serv_addr = config.get_goldminer_serv_addr()
-            if serv_addr:
-                set_serv_addr(serv_addr)
-                logger.info(f"掘金终端地址设置为: {serv_addr}（实时价格模块）")
+            # 使用全局锁保护掘金 API 初始化，避免并发冲突
+            with _gm_api_lock:
+                # 设置终端服务地址（Linux环境需要指向Windows终端）
+                serv_addr = config.get_goldminer_serv_addr()
+                if serv_addr:
+                    set_serv_addr(serv_addr)
+                    logger.info(f"掘金终端地址设置为: {serv_addr}（实时价格模块）")
 
-            # 设置token
-            set_token(self.token)
+                # 设置token
+                set_token(self.token)
 
             logger.info("掘金API连接成功（实时价格模块）")
 
@@ -83,9 +86,11 @@ class RealtimePriceFetcher:
 
             logger.info(f"正在获取 {len(symbols)} 只股票的实时价格...")
 
-            # 调用掘金API获取实时价格
-            # 支持两种格式：字符串（逗号分隔）或列表
-            current_data = current_price(symbols=symbols)
+            # 使用全局锁保护掘金 API 调用，避免并发冲突
+            with _gm_api_lock:
+                # 调用掘金API获取实时价格
+                # 支持两种格式：字符串（逗号分隔）或列表
+                current_data = current_price(symbols=symbols)
 
             if not current_data:
                 logger.warning("未获取到任何实时价格数据")

@@ -1,4 +1,5 @@
 import pandas as pd
+import threading
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
@@ -6,6 +7,10 @@ from loguru import logger
 
 from ..utils.config import config
 from ..utils.timezone import today_beijing
+
+# 掘金 API 全局锁，确保同一时间只有一个线程在调用掘金 API
+# 掘金 SDK 使用全局状态，不是线程安全的
+_gm_api_lock = threading.Lock()
 
 
 @dataclass
@@ -60,19 +65,21 @@ class GoldMinerFetcher:
             # 导入掘金API
             from gm.api import set_token, set_serv_addr, get_symbols
 
-            # 设置终端服务地址（Linux环境需要指向Windows终端）
-            serv_addr = config.get_goldminer_serv_addr()
-            if serv_addr:
-                set_serv_addr(serv_addr)
-                logger.info(f"掘金终端地址设置为: {serv_addr}")
+            # 使用全局锁保护掘金 API 初始化，避免并发冲突
+            with _gm_api_lock:
+                # 设置终端服务地址（Linux环境需要指向Windows终端）
+                serv_addr = config.get_goldminer_serv_addr()
+                if serv_addr:
+                    set_serv_addr(serv_addr)
+                    logger.info(f"掘金终端地址设置为: {serv_addr}")
 
-            # 设置token
-            set_token(self.token)
+                # 设置token
+                set_token(self.token)
 
-            # 测试连接
-            test_result = get_symbols(sec_type1=1010, sec_type2=101001, df=True)
-            if test_result is None or len(test_result) == 0:
-                raise Exception("掘金API连接测试失败")
+                # 测试连接
+                test_result = get_symbols(sec_type1=1010, sec_type2=101001, df=True)
+                if test_result is None or len(test_result) == 0:
+                    raise Exception("掘金API连接测试失败")
 
             logger.info("掘金API连接成功")
 
@@ -100,13 +107,15 @@ class GoldMinerFetcher:
         try:
             print(f"正在获取{trade_date}的股票列表...")
 
-            # 获取股票列表
-            stocks_df = get_symbols(
-                sec_type1=1010,  # 股票
-                sec_type2=101001,  # A股
-                trade_date=trade_date,
-                df=True
-            )
+            # 使用全局锁保护掘金 API 调用
+            with _gm_api_lock:
+                # 获取股票列表
+                stocks_df = get_symbols(
+                    sec_type1=1010,  # 股票
+                    sec_type2=101001,  # A股
+                    trade_date=trade_date,
+                    df=True
+                )
 
             if stocks_df is None or len(stocks_df) == 0:
                 logger.warning(f"未获取到{trade_date}的股票列表")
@@ -185,16 +194,18 @@ class GoldMinerFetcher:
             # 构建查询字段
             fields = ','.join(self.market_data_fields)
 
-            # 获取历史数据
-            history_data = history(
-                symbol=symbol,
-                frequency=frequency,
-                start_time=f"{start_date} 09:00:00",
-                end_time=f"{end_date} 15:30:00",
-                fields=fields,
-                adjust=ADJUST_PREV,  # 前复权
-                df=True
-            )
+            # 使用全局锁保护掘金 API 调用
+            with _gm_api_lock:
+                # 获取历史数据
+                history_data = history(
+                    symbol=symbol,
+                    frequency=frequency,
+                    start_time=f"{start_date} 09:00:00",
+                    end_time=f"{end_date} 15:30:00",
+                    fields=fields,
+                    adjust=ADJUST_PREV,  # 前复权
+                    df=True
+                )
 
             if history_data is None or len(history_data) == 0:
                 logger.debug(f"股票{symbol}在{start_date}到{end_date}期间没有数据")

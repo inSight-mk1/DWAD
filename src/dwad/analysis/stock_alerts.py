@@ -25,7 +25,7 @@ import pandas as pd
 from loguru import logger
 
 from ..data_storage.parquet_storage import ParquetStorage
-from ..data_fetcher.goldminer_fetcher import GoldMinerFetcher
+from ..data_fetcher.goldminer_fetcher import GoldMinerFetcher, _gm_api_lock
 from ..utils.config import config
 from ..utils.timezone import now_beijing, now_beijing_iso, today_beijing
 
@@ -49,8 +49,9 @@ class StockAlertEngine:
         self.storage = ParquetStorage()
         self._goldminer: Optional[GoldMinerFetcher] = None
         self._stock_info_df: Optional[pd.DataFrame] = None
-        # 分钟线数据缓存，用于批量获取后复用，避免重复网络请求
-        self._intraday_cache: Dict[str, pd.DataFrame] = {}
+        # 当日行情快照缓存，用于批量获取后复用，避免重复网络请求
+        # 格式: {symbol: {open, high, low, price, cum_volume, created_at}}
+        self._current_cache: Dict[str, Dict[str, Any]] = {}
 
         paths = config.get_data_paths()
         base_metadata = Path(paths.get("metadata_path", "./data/metadata"))
@@ -345,76 +346,67 @@ class StockAlertEngine:
     # 预警规则计算与状态管理
     # ------------------------------------------------------------------
 
-    def _prefetch_intraday_data(self, symbols: List[str], date_str: str) -> None:
-        """批量预获取所有股票的分钟线数据，存入缓存。
+    def _prefetch_current_data(self, symbols: List[str], date_str: str) -> bool:
+        """批量预获取所有股票的当日行情快照，存入缓存。
         
-        这样后续 _build_today_bar_from_intraday 可以直接从缓存读取，
-        避免每只股票单独发起网络请求。
+        使用掘金 current API 获取当日 OHLCV 数据，比分钟线数据获取快得多。
+        
+        Returns:
+            bool: 是否成功获取数据。如果返回 False，调用方应该中止预警检测。
         """
         if not symbols:
-            return
+            return True
+
+        # 确保掘金 API 已初始化（设置 token 和服务地址）
+        if self._ensure_goldminer() is None:
+            logger.error("掘金 API 未初始化，无法获取行情数据")
+            return False
 
         try:
-            from gm.api import history, ADJUST_NONE
+            from gm.api import current
         except Exception as e:
-            logger.error(f"导入掘金API失败(批量分钟线): {e}")
-            return
-
-        start_time = f"{date_str} 09:00:00"
-        end_time = f"{date_str} 15:30:00"
+            logger.error(f"导入掘金API失败(current): {e}")
+            return False
 
         try:
-            logger.info(f"批量获取 {len(symbols)} 只股票的分钟线数据...")
-            # 掘金 history API 支持 list 格式的 symbol 参数
-            df = history(
-                symbol=symbols,
-                frequency="60s",
-                start_time=start_time,
-                end_time=end_time,
-                fields="symbol,open,close,high,low,volume,eob",
-                adjust=ADJUST_NONE,
-                df=True,
-            )
+            logger.info(f"批量获取 {len(symbols)} 只股票的当日行情快照...")
+            # 使用全局锁保护掘金 API 调用，避免并发冲突
+            with _gm_api_lock:
+                # current API 返回当日 OHLCV 数据，比分钟线快得多
+                current_data = current(symbols=symbols)
         except Exception as e:
-            logger.error(f"批量获取分钟线异常: {e}")
-            return
+            logger.error(f"批量获取行情快照异常: {e}")
+            return False
 
-        # 掘金API在连接失败时可能返回dict而非DataFrame
-        if isinstance(df, dict):
-            status = df.get("status", "unknown")
-            message = df.get("message", "未知错误")
-            logger.error(f"批量获取分钟线失败: status={status}, message={message}")
-            return
+        # 掘金API在连接失败时可能返回dict而非list
+        if isinstance(current_data, dict):
+            status = current_data.get("status", "unknown")
+            message = current_data.get("message", "未知错误")
+            logger.error(f"批量获取行情快照失败: status={status}, message={message}")
+            return False
 
-        if df is None or len(df) == 0:
-            logger.warning("批量获取分钟线: 无数据返回")
-            return
+        if current_data is None or len(current_data) == 0:
+            logger.warning("批量获取行情快照: 无数据返回")
+            return False
 
-        if "symbol" not in df.columns or "eob" not in df.columns:
-            logger.warning("批量获取分钟线: 返回数据缺少必要列")
-            return
+        # 存入缓存
+        for item in current_data:
+            symbol = item.get("symbol")
+            if symbol:
+                self._current_cache[symbol] = item
 
-        # 按 symbol 分组存入缓存
-        df = df.copy()
-        df["date"] = pd.to_datetime(df["eob"]).dt.strftime("%Y-%m-%d")
-        df = df[df["date"] == date_str]
+        logger.info(f"行情快照缓存完成，共 {len(self._current_cache)} 只股票有数据")
+        return True
 
-        for symbol in symbols:
-            symbol_df = df[df["symbol"] == symbol]
-            if not symbol_df.empty:
-                self._intraday_cache[symbol] = symbol_df
-
-        logger.info(f"分钟线数据缓存完成，共 {len(self._intraday_cache)} 只股票有数据")
-
-    def _clear_intraday_cache(self) -> None:
-        """清空分钟线数据缓存。"""
-        self._intraday_cache.clear()
+    def _clear_current_cache(self) -> None:
+        """清空当日行情快照缓存。"""
+        self._current_cache.clear()
 
     def _get_daily_bars_with_today(self, symbol: str, max_days: int = 120) -> Optional[pd.DataFrame]:
         """获取包含当日模拟bar在内的日线数据。
 
         - 优先使用本地前复权日线数据（ParquetStorage）
-        - 如果本地最新一条不是今天，则用掘金1分钟/60秒bar合成当日bar并追加
+        - 如果本地最新一条不是今天，则用当日行情快照构建当日bar并追加
         """
 
         df = self.storage.load_stock_data(symbol)
@@ -437,89 +429,54 @@ class StockAlertEngine:
         if last_date == today_str:
             return df
 
-        # 尝试用分钟线合成当日bar
-        intraday_bar = self._build_today_bar_from_intraday(symbol, today_str)
-        if intraday_bar is None:
+        # 尝试用当日行情快照构建当日bar
+        today_bar = self._build_today_bar_from_current(symbol, today_str)
+        if today_bar is None:
             return df
 
-        df2 = pd.concat([df, pd.DataFrame([intraday_bar])], ignore_index=True)
+        df2 = pd.concat([df, pd.DataFrame([today_bar])], ignore_index=True)
         return df2
 
-    def _build_today_bar_from_intraday(self, symbol: str, date_str: str) -> Optional[Dict[str, Any]]:
-        """使用分钟线合成当日日bar，并线性外推全天成交量。
+    def _build_today_bar_from_current(self, symbol: str, date_str: str) -> Optional[Dict[str, Any]]:
+        """使用当日行情快照构建当日日bar。
 
-        优先从缓存读取（由 _prefetch_intraday_data 批量获取），
-        若缓存无数据则单独获取（兼容旧逻辑）。
+        优先从缓存读取（由 _prefetch_current_data 批量获取），
+        若缓存无数据则返回 None。
+        
+        current API 返回的数据包含：
+        - open: 当日开盘价
+        - high: 当日最高价
+        - low: 当日最低价
+        - price: 当前价格（收盘价）
+        - cum_volume: 累计成交量
         """
-        # 优先从缓存读取（静默，不打印日志）
-        df = self._intraday_cache.get(symbol)
-
-        # 缓存无数据，回退到单独获取
-        if df is None or df.empty:
-            try:
-                from gm.api import history, ADJUST_NONE
-            except Exception as e:
-                logger.error(f"导入掘金API失败(分钟线): {e}")
-                return None
-
-            start_time = f"{date_str} 09:00:00"
-            end_time = f"{date_str} 15:30:00"
-
-            try:
-                df = history(
-                    symbol=symbol,
-                    frequency="60s",
-                    start_time=start_time,
-                    end_time=end_time,
-                    fields="open,close,high,low,volume,eob",
-                    adjust=ADJUST_NONE,
-                    df=True,
-                )
-            except Exception as e:
-                logger.error(f"获取{symbol}分钟线异常: {e}")
-                return None
-
-            # 掘金API在连接失败时可能返回dict而非DataFrame
-            if isinstance(df, dict):
-                status = df.get("status", "unknown")
-                message = df.get("message", "未知错误")
-                func = df.get("function", "unknown")
-                logger.error(f"获取{symbol}分钟线失败: status={status}, message={message}, function={func}")
-                return None
-
-            if df is None or len(df) == 0:
-                return None
-
-            df = df.copy()
-            df["date"] = pd.to_datetime(df["eob"]).dt.strftime("%Y-%m-%d")
-            df = df[df["date"] == date_str]
-
-        # 从这里开始，df 可能来自缓存或单独获取
-        if df is None or df.empty:
-            return None
-        if "open" not in df.columns or "close" not in df.columns or "volume" not in df.columns:
+        # 从缓存读取
+        item = self._current_cache.get(symbol)
+        if item is None:
             return None
 
-        vol_so_far = float(df["volume"].sum())
-        bars = len(df)
-        total_bars = 240  # 4 小时交易时间，按 1 分钟一个bar 估算
-        proj_vol = vol_so_far
-        if 0 < bars < total_bars:
-            proj_vol = vol_so_far * (total_bars / bars)
+        # 检查必要字段
+        try:
+            open_price = float(item.get("open", 0))
+            high_price = float(item.get("high", 0))
+            low_price = float(item.get("low", 0))
+            close_price = float(item.get("price", 0))
+            volume = int(item.get("cum_volume", 0))
+        except (TypeError, ValueError):
+            return None
 
-        first = df.iloc[0]
-        last = df.iloc[-1]
-        high_val = float(df["high"].max()) if "high" in df.columns else float(max(first["open"], last["close"]))
-        low_val = float(df["low"].min()) if "low" in df.columns else float(min(first["open"], last["close"]))
+        # 验证数据有效性
+        if open_price <= 0 or close_price <= 0:
+            return None
 
         return {
             "symbol": symbol,
             "date": date_str,
-            "open_price": float(first["open"]),
-            "high_price": high_val,
-            "low_price": low_val,
-            "close_price": float(last["close"]),
-            "volume": int(proj_vol),
+            "open_price": open_price,
+            "high_price": high_price,
+            "low_price": low_price,
+            "close_price": close_price,
+            "volume": volume,
         }
 
     def _detect_nuxing(self, symbol: str, daily_df: pd.DataFrame, vol_lookback: int = 5) -> Tuple[bool, Optional[Dict[str, Any]]]:
@@ -557,6 +514,10 @@ class StockAlertEngine:
         change_pct = (last_close / prev_close - 1.0) * 100 if prev_close > 0 else 0.0
         vol_vs_prev_pct = (last_vol / prev_vol - 1.0) * 100 if prev_vol > 0 else 0.0
         vol_vs_avg_pct = (last_vol / avg_vol - 1.0) * 100 if avg_vol > 0 else 0.0
+        
+        # 缩量幅度取绝对值（因为已经是缩量，负值表示缩量，取绝对值显示为正）
+        shrink_vs_prev = abs(vol_vs_prev_pct) if vol_vs_prev_pct < 0 else 0.0
+        shrink_vs_avg = abs(vol_vs_avg_pct) if vol_vs_avg_pct < 0 else 0.0
 
         cond1 = last_vol < avg_vol
         cond2 = last_vol < prev_vol
@@ -568,16 +529,16 @@ class StockAlertEngine:
             "symbol": symbol,
             "date": str(last["date"]),
             "metrics": {
-                "当日涨幅": f"{change_pct:.2f}%",
-                "日缩量(vs昨日)": f"{vol_vs_prev_pct:.2f}%",
-                "5MA缩量": f"{vol_vs_avg_pct:.2f}%",
-                "收盘价": f"{last_close:.2f}",
+                "当日缩量": f"{shrink_vs_prev:.2f}%",
+                "5MA缩量": f"{shrink_vs_avg:.2f}%",
+                "当前价": f"{last_close:.2f}",
+                "今日涨幅": f"{change_pct:.2f}%",
             },
         }
         
         # 输出计算结果日志
-        logger.info("  [女星股] 计算结果: 涨幅={:.2f}%, 日缩量={:.2f}%, 5MA缩量={:.2f}%, 收盘价={:.2f}, 触发={}",
-                    change_pct, vol_vs_prev_pct, vol_vs_avg_pct, last_close, triggered)
+        logger.info("  [女星股] 计算结果: 涨幅={:.2f}%, 当日缩量={:.2f}%, 5MA缩量={:.2f}%, 收盘价={:.2f}, 触发={}",
+                    change_pct, shrink_vs_prev, shrink_vs_avg, last_close, triggered)
 
         return triggered, result if triggered else None
 
@@ -684,43 +645,61 @@ class StockAlertEngine:
             logger.debug("  [金店股] 2日K线数据不足9条，跳过")
             return None
 
-        k, d, j = self._compute_kdj(df2, period=9)
-        if j.empty:
-            logger.debug("  [金店股] KDJ计算失败，跳过")
+        # 计算 2日K 的 KDJ（用于预警判断）
+        k2, d2, j2 = self._compute_kdj(df2, period=9)
+        if j2.empty:
+            logger.debug("  [金店股] 2日KDJ计算失败，跳过")
             return None
 
-        j_last = j.iloc[-1]
-        k_last = k.iloc[-1]
-        d_last = d.iloc[-1]
+        j2_last = j2.iloc[-1]
         last_row = df2.iloc[-1]
         close_price = float(last_row["close_price"])
-        triggered = not pd.isna(j_last) and j_last < 0
+        triggered = not pd.isna(j2_last) and j2_last < 0
+        
+        # 计算 1日K 的 KDJ（仅用于显示，不参与预警判断）
+        daily_df_sorted = daily_df.sort_values("date").reset_index(drop=True)
+        k1, d1, j1 = self._compute_kdj(daily_df_sorted, period=9)
+        j1_last = j1.iloc[-1] if not j1.empty else float('nan')
+        
+        # 计算今日涨幅（基于日线数据）
+        last_daily = daily_df_sorted.iloc[-1]
+        prev_daily = daily_df_sorted.iloc[-2] if len(daily_df_sorted) >= 2 else None
+        last_daily_close = float(last_daily["close_price"])
+        if prev_daily is not None:
+            prev_daily_close = float(prev_daily["close_price"])
+            change_pct = (last_daily_close / prev_daily_close - 1.0) * 100 if prev_daily_close > 0 else 0.0
+        else:
+            change_pct = 0.0
         
         # 输出计算结果日志（包含当前股价）
-        logger.info("  [金店股] 计算结果: K={:.2f}, D={:.2f}, J={:.2f}, 收盘价={:.2f}, 2日K日期={}, 触发={}",
-                    float(k_last), float(d_last), float(j_last), close_price, str(last_row["date"]), triggered)
+        logger.info("  [金店股] 计算结果: 2日J={:.2f}, 1日J={:.2f}, 收盘价={:.2f}, 2日K日期={}, 触发={}",
+                    float(j2_last), float(j1_last), close_price, str(last_row["date"]), triggered)
         
         if not triggered:
             return None
 
+        # metrics 字段按显示顺序排列：第一行(2日J值, 1日J值)，第二行(当前价, 今日涨幅)
         return {
             "rule": "jindian",
             "symbol": symbol,
             "date": str(last_row["date"]),
             "metrics": {
-                "K值": f"{float(k_last):.2f}",
-                "D值": f"{float(d_last):.2f}",
-                "J值": f"{float(j_last):.2f}",
-                "收盘价": f"{float(last_row['close_price']):.2f}",
+                "2日J值": f"{float(j2_last):.2f}",
+                "1日J值": f"{float(j1_last):.2f}" if not pd.isna(j1_last) else "N/A",
+                "当前价": f"{last_daily_close:.2f}",
+                "今日涨幅": f"{change_pct:.2f}%",
             },
         }
 
-    def run_detection_cycle(self) -> None:
+    def run_detection_cycle(self) -> Tuple[bool, Optional[str]]:
         """执行一轮预警检测，更新状态文件。
 
         - 对当前配置中的女星股 / 金店股逐一检测
         - 触发后在 state["alerts"] 中按 (rule,symbol,date) 建立记录
         - 已触发的预警在当日内不会被自动清除，由前端确认后停止推送
+        
+        Returns:
+            Tuple[bool, Optional[str]]: (是否成功, 错误信息)
         """
 
         cfg = {
@@ -730,7 +709,7 @@ class StockAlertEngine:
         all_symbols = sorted(set(cfg["nuxing"]) | set(cfg["jindian"]))
         if not all_symbols:
             logger.info("预警检测: 自选列表为空，跳过检测")
-            return
+            return True, None
 
         # 获取今天的日期，用于判断预警是否是今天的
         today_str = today_beijing()
@@ -738,9 +717,12 @@ class StockAlertEngine:
         logger.info("预警检测开始: 女星股 {} 只, 金店股 {} 只, 共 {} 只待检测, 今日={}",
                     len(cfg["nuxing"]), len(cfg["jindian"]), len(all_symbols), today_str)
 
-        # 批量预获取所有股票的分钟线数据，避免逐只股票单独请求
-        self._clear_intraday_cache()
-        self._prefetch_intraday_data(all_symbols, today_str)
+        # 批量预获取所有股票的当日行情快照，避免逐只股票单独请求
+        self._clear_current_cache()
+        if not self._prefetch_current_data(all_symbols, today_str):
+            error_msg = "无法连接到掘金终端服务，请检查终端是否运行"
+            logger.error(error_msg)
+            return False, error_msg
 
         state = self._load_state()
         alerts: Dict[str, Any] = state.get("alerts", {})
@@ -760,7 +742,7 @@ class StockAlertEngine:
             is_today_data = (latest_date == today_str)
             logger.info("  获取到 {} 条日线数据，最新日期: {} {}", 
                        len(daily_df), latest_date, 
-                       "(今日数据)" if is_today_data else "(非今日数据，分钟线可能获取失败)")
+                       "(今日数据)" if is_today_data else "(非今日数据，行情快照可能获取失败)")
 
             # 女星股
             if symbol in cfg["nuxing"]:
@@ -833,6 +815,7 @@ class StockAlertEngine:
         state["alerts"] = alerts
         self._save_state(state)
         logger.info("预警检测完成: 本轮新增 {} 条预警", new_alerts_count)
+        return True, None
 
     def list_alerts(self, only_active: bool = False) -> List[Dict[str, Any]]:
         """列出所有（或仅未确认的）预警记录。"""
